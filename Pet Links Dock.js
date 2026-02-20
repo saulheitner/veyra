@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Pet Links Dock
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      1.7.3
+// @version      1.8.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Pet%20Links%20Dock.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Pet%20Links%20Dock.js
-// @description  Draggable dock. Per-set local cache with in-modal management. Two linked pets layout-anchored extraction for main + links.
+// @description  Draggable dock. Per-set local cache with in-modal management. Linked pets extraction + stat contributions + background refresh. Works from multiple pages, fetches from /pets.php. Closes /pets.php when done.
 // @match        https://demonicscans.org/*
 // @run-at       document-idle
 // @grant        unsafeWindow
@@ -18,22 +18,21 @@
 (function () {
   "use strict";
 
-    function isExceptionPage() {
-  // Normalize URL for robust matching
-  const href = (window.location && window.location.href || "").toLowerCase();
-  const path = (window.location && window.location.pathname || "").toLowerCase();
-
-  // Match on pathname first (safer), then fallback to href
-  const targets = [
-    "/bookmark.php",
-    "/title/",
-    "/manga/",
-    "/index.php",
-  ];
-
-  // If any target is present in the path or full URL → exception
-  return targets.some(t => path.includes(t) || href.includes(t));
-}
+  // =========================
+  // Exception pages
+  // =========================
+  function isExceptionPage() {
+    const href = (window.location && window.location.href || "").toLowerCase();
+    const path = (window.location && window.location.pathname || "").toLowerCase();
+    const targets = [
+      "/bookmarks.php",
+      "/lastupdates.php",
+      "/title/",
+      "/manga/",
+      "/index.php",
+    ];
+    return targets.some(t => path.includes(t) || href.includes(t));
+  }
 
   // =========================
   // CONFIG
@@ -41,10 +40,7 @@
   const ORIGIN = "https://demonicscans.org";
   const PETS_PATH = "/pets.php";
 
-  // pets.php must be focused to run fully:
-  const OPEN_PETS_TAB_ACTIVE = true;
-
-  // Delay after clicking Attack before opening /pets.php
+  const OPEN_PETS_TAB_ACTIVE = true;    // focus /pets.php (helps with CF)
   const ATTACK_DELAY_MS = 500;
 
   // Selectors
@@ -57,10 +53,9 @@
 
   // Dock visuals
   const DOCK_Z_INDEX = 10000;
-  const DOCK_WIDTH_PX = 145;
+  const DOCK_WIDTH_PX = 143;
   const LINKED_SIZE_PX = 40;
 
-  // Polling to avoid double-click dock update
   const POLL_INTERVAL_MS = 500;
   const POLL_TIMEOUT_MS = 60000;
 
@@ -79,20 +74,22 @@
   const DOCK_POS_KEY       = "petdock_pos_v3";       // { left, top }
   const DOCK_COLLAPSE_KEY  = "petdock_collapse_v3";  // boolean
 
-  // Two-step enforcement (Set -> Attack) window
-  const SEQUENCE_WINDOW_MS = 15 * 1000; // 15 seconds
+  // Two-step enforcement (Set -> Attack)
+  const SEQUENCE_WINDOW_MS = 15 * 1000;
 
-  // Per-set local cache (avoid /pets.php if we already have data)
+  // Per-set local cache (images list)
   const LOCAL_CACHE_BUCKET = "petdock_local_by_set_v1";
-  const LOCAL_CACHE_TTL_MS = 0; // 0 = no expiry; e.g., 12*60*60*1000 for 12h
+  const LOCAL_CACHE_TTL_MS = 0; // no expiry
 
-  // Optional: highlight detected modal nodes (for debugging)
   const DEBUG_HILITE = false;
-
-  // Page context access (openLinksModal lives there)
   const W = (typeof unsafeWindow !== "undefined") ? unsafeWindow : window;
 
-  // Local state
+  // Extra GM storage for inventory index (NOT localStorage)
+  const INV_INDEX_KEY = "petdock_inventory_index_v1";
+
+  // Power scaling exclusions when used as LINK pets
+  const POWER_EXCLUDED_IDS = new Set(["71043", "64279"]);
+
   let refreshInProgress = false;
   let lastRenderedCapturedAt = 0;
 
@@ -116,24 +113,32 @@
       try { localStorage.removeItem(LOCAL_CACHE_BUCKET); } catch {}
       alert("PetDock per-set local cache cleared.");
     });
+
+    GM_registerMenuCommand("PetDock: Refresh inventory index now", async () => {
+      try {
+        const tab = await openPetsForVerify();
+        setStatus({ state: "waiting", msg: "Verify opened in background." });
+        setTimeout(() => { try { tab?.close?.(); } catch {} }, 1500);
+      } catch (e) {
+        alert("Could not open /pets.php for verify. Try clicking Attack once.");
+      }
+    });
   }
 
+  // =========================
+  // BOOT DOCK
+  // =========================
+  if (!isExceptionPage()) {
+    injectDockCss();
+    ensureDock();
+    restoreDockState();
+    renderFromCache();
+    installAttackModalObserver();
 
-// =========================
-// BOOT DOCK
-// =========================
-if (!isExceptionPage()) {
-  injectDockCss();
-  ensureDock();
-  restoreDockState();
-  renderFromCache();
+    // Allow clicking any grid pet image (if present) -> details modal
+    document.addEventListener("click", onGridImageClick, true);
+  }
 
-  // Install modal tools observer (adds clear/manage buttons near Attack)
-  installAttackModalObserver();
-}
-
-
-  // Best-effort cross-tab listeners (polling still used)
   if (typeof GM_addValueChangeListener === "function") {
     GM_addValueChangeListener(CACHE_KEY, () => {
       refreshInProgress = false;
@@ -145,15 +150,13 @@ if (!isExceptionPage()) {
   }
 
   // =========================
-  // STEP 1: Set button -> capture label + set info
+  // STEP 1: Set button
   // =========================
   document.addEventListener("click", async (e) => {
-    if (isExceptionPage()) return; // ⬅️ guard (do nothing on exception pages)
-
+    if (isExceptionPage()) return;
     const btn = e.target.closest(SET_BTN_SELECTOR);
     if (!btn) return;
 
-    // Ensure it is a pets set
     const applyType = cleanText(btn.getAttribute("data-apply-type") || "");
     if (applyType && applyType.toLowerCase() !== "pets") return;
 
@@ -168,17 +171,15 @@ if (!isExceptionPage()) {
   }, true);
 
   // =========================
-  // STEP 2: Attack button -> only after valid Set click; use local cache first
+  // STEP 2: Attack button
   // =========================
   document.addEventListener("click", async (e) => {
-    if (isExceptionPage()) return; // ⬅️ guard (do nothing on exception pages)
+    if (isExceptionPage()) return;
 
     const btn = e.target.closest(ATTACK_BTN_SELECTOR);
     if (!btn) return;
-
     if (refreshInProgress) return;
 
-    // Must follow a recent Set click
     const pending = await gmGet(PENDING_KEY, null);
     const now = Date.now();
     if (!pending || !pending.setKey || (now - Number(pending.at || 0) > SEQUENCE_WINDOW_MS)) {
@@ -192,7 +193,7 @@ if (!isExceptionPage()) {
     const setKey = pending.setKey;
     await gmSet(LABEL_KEY, label);
 
-    // 1) Try localStorage cache first (per-set)
+    // 1) Try per-set localStorage cache
     const cached = getCachedBySetKey(setKey);
     if (cached && cached.payload && isLocalCacheFresh(cached)) {
       await gmSet(CACHE_KEY, cached.payload);
@@ -200,10 +201,13 @@ if (!isExceptionPage()) {
       setStatus({ state: "done", msg: "Loaded from local cache." });
       refreshInProgress = false;
       renderFromCache();
+
+      // Background verify (update index; may close itself)
+      setTimeout(() => { try { openPetsForVerify(setKey); } catch {} }, 100);
       return;
     }
 
-    // 2) Otherwise, proceed with normal flow (open /pets.php)
+    // 2) Open /pets.php for fresh collection
     setMsg(label ? `<b>${escapeHtml(label)}</b><br>Refreshing…` : `Refreshing…`);
     setStatus({ state: "starting", msg: `Waiting ${ATTACK_DELAY_MS}ms…` });
 
@@ -212,8 +216,8 @@ if (!isExceptionPage()) {
 
     try {
       await sleep(ATTACK_DELAY_MS);
-      await openPetsAndCollect(label, setKey);
-      pollUntilPublished(beforeAt);
+      const tabHandle = await openPetsAndCollect(label, setKey);
+      pollUntilPublished(beforeAt, tabHandle);
     } catch (err) {
       console.error(err);
       setStatus({ state: "error", msg: `Refresh error: ${String(err.message || err)}` });
@@ -221,11 +225,11 @@ if (!isExceptionPage()) {
     }
   }, true);
 
-  // Auto-collect if we are on /pets.php with token
-  maybeAutoCollectOnPetsTab();
+  // Auto-collect/verify on /pets.php
+  maybeWorkOnPetsTab();
 
   // =========================
-  // Open /pets.php (focused) and trigger collect via URL
+  // Open /pets.php and return tab handle
   // =========================
   async function openPetsAndCollect(label, setKey) {
     const nonce = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -235,19 +239,37 @@ if (!isExceptionPage()) {
       `&petdockLabel=${encodeURIComponent(label || "")}` +
       `&petdockSetKey=${encodeURIComponent(setKey || "")}`;
 
+    let tabHandle = null;
     if (typeof GM_openInTab === "function") {
-      GM_openInTab(url, { active: OPEN_PETS_TAB_ACTIVE, insert: true, setParent: true });
+      tabHandle = GM_openInTab(url, { active: OPEN_PETS_TAB_ACTIVE, insert: true, setParent: true });
     } else {
       window.open(url, "_blank", "noopener,noreferrer");
     }
 
     setStatus({ state: "waiting", msg: "Collecting in /pets.php…" });
+    return tabHandle;
   }
 
   // =========================
-  // Poll for CACHE publish (prevents double-click issue)
+  // Background verify tab opener
   // =========================
-  function pollUntilPublished(beforeAt) {
+  function openPetsForVerify(setKey) {
+    const url =
+      `${ORIGIN}${PETS_PATH}` +
+      `?petdockVerify=1` +
+      `&petdockSetKey=${encodeURIComponent(setKey || "")}`;
+    if (typeof GM_openInTab === "function") {
+      return GM_openInTab(url, { active: false, insert: true, setParent: true });
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return null;
+    }
+  }
+
+  // =========================
+  // Poll for publish; close /pets.php from origin
+  // =========================
+  function pollUntilPublished(beforeAt, tabHandle) {
     const start = Date.now();
 
     const timer = setInterval(async () => {
@@ -256,13 +278,17 @@ if (!isExceptionPage()) {
 
       if (nowAt && nowAt > beforeAt) {
         clearInterval(timer);
+        // Close collector tab (origin-side)
+        try { tabHandle?.close?.(); } catch {}
         refreshInProgress = false;
         renderFromCache();
+        try { window.focus?.(); } catch {}
         return;
       }
 
       if (Date.now() - start > POLL_TIMEOUT_MS) {
         clearInterval(timer);
+        try { tabHandle?.close?.(); } catch {}
         refreshInProgress = false;
         setStatus({ state: "error", msg: "Timed out waiting for /pets.php to finish collecting." });
       }
@@ -270,25 +296,57 @@ if (!isExceptionPage()) {
   }
 
   // =========================
-  // /pets.php: auto collect (focus-aware + resumable)
+  // /pets.php auto-collect OR verify
   // =========================
-  async function maybeAutoCollectOnPetsTab() {
-    if (isExceptionPage()) return; // ⬅️ guard
+  async function maybeWorkOnPetsTab() {
+    if (isExceptionPage()) return;
     if (!location.pathname.endsWith(PETS_PATH)) return;
 
     const qs = new URLSearchParams(location.search);
     const token = qs.get("petdockCollect");
+    const verify = qs.get("petdockVerify");
     const labelFromUrl = cleanText(qs.get("petdockLabel") || "");
     const setKeyFromUrl = cleanText(qs.get("petdockSetKey") || "");
 
+    // ---------- VERIFY ----------
+    if (verify) {
+      try {
+        if (/just a moment/i.test(document.title || "")) {
+          setStatus({ state: "challenge", msg: "Cloudflare check detected during verify." });
+          return;
+        }
+        const invMaps = buildPetInventoryIndexFromPage();
+        await gmSet(INV_INDEX_KEY, invMaps);
+
+        if (setKeyFromUrl) {
+          const cached = getCachedBySetKey(setKeyFromUrl);
+          if (cached && cached.payload && cached.payload.pairs) {
+            const updated = applyInventoryVerificationToCachedPayload(cached.payload, invMaps);
+            if (updated.changedCount > 0) {
+              putCachedBySetKey(setKeyFromUrl, { payload: updated.payload, label: await gmGet(LABEL_KEY, "") });
+              setStatus({ state: "done", msg: `Verified & updated ${updated.changedCount} change(s) for this set.` });
+            } else {
+              setStatus({ state: "done", msg: `Verified: no changes.` });
+            }
+          }
+        }
+      } catch (err) {
+        console.error(err);
+        setStatus({ state: "error", msg: `Verify error: ${String(err.message || err)}` });
+      } finally {
+        // Self-close verify tabs
+        setTimeout(() => { try { window.close(); } catch {} }, 600);
+      }
+      return;
+    }
+
+    // ---------- COLLECT ----------
     if (!token) return;
 
-    // Avoid rerun for same token
     const last = await gmGet(LAST_NONCE_KEY, "");
     if (last === token) return;
     await gmSet(LAST_NONCE_KEY, token);
 
-    // Cloudflare interstitial
     if (/just a moment/i.test(document.title || "")) {
       setStatus({ state: "challenge", msg: "Cloudflare check detected. Complete it, then click Attack again." });
       return;
@@ -297,7 +355,6 @@ if (!isExceptionPage()) {
     await gmSet(RUNNING_KEY, token);
     if (labelFromUrl) await gmSet(LABEL_KEY, labelFromUrl);
 
-    // If tab isn't visible, wait until user focuses it
     await waitUntilVisible();
 
     try {
@@ -305,21 +362,16 @@ if (!isExceptionPage()) {
 
       const payload = await collectPairsOnPetsPage_FirstGridOnly_Resumable(token);
 
-      // Publish final cache globally
       await gmSet(CACHE_KEY, payload);
-
-      // Save per-set local cache (if setKey provided)
       if (setKeyFromUrl) {
         putCachedBySetKey(setKeyFromUrl, { payload, label: labelFromUrl });
       }
-
-      // Clear progress markers
       await gmSet(PROGRESS_KEY, null);
       await gmSet(RUNNING_KEY, null);
 
       setStatus({ state: "done", msg: `Saved ${Object.keys(payload.pairs).length} pets` });
 
-      // Optional: close when done (may be blocked)
+      // NOTE: Self-close collector tab as a fallback (origin also closes it)
       setTimeout(() => { try { window.close(); } catch {} }, 700);
 
     } catch (err) {
@@ -330,7 +382,6 @@ if (!isExceptionPage()) {
 
   // =========================
   // Collector: FIRST GRID ONLY + resumable + robust linked parsing
-  // Stores: { main, linked, linked2, mainName, linkedName, linkedName2 }
   // =========================
   async function collectPairsOnPetsPage_FirstGridOnly_Resumable(token) {
     const ok = await waitFor(() => typeof W.openLinksModal === "function", 20000);
@@ -343,17 +394,15 @@ if (!isExceptionPage()) {
     const ids = Array.from(firstGrid.querySelectorAll('.slot-box[data-pet-inv-id]'))
       .map(el => el.getAttribute("data-pet-inv-id"))
       .filter(Boolean);
-
     const petIds = Array.from(new Set(ids));
     if (!petIds.length) throw new Error("No pets found in first grid.");
 
-    const petIdsHash = hashList(petIds);
+    const petIdsHash = petIds.join("\n");
 
-    // Load progress if it matches this token + same pet list
+    // Resume support
     const progress = await gmGet(PROGRESS_KEY, null);
     let startIndex = 0;
     let pairs = {};
-
     if (progress && progress.token === token && progress.petIdsHash === petIdsHash) {
       startIndex = Number(progress.index || 0);
       pairs = progress.pairs || {};
@@ -363,7 +412,11 @@ if (!isExceptionPage()) {
       pairs = {};
     }
 
-    // --- Robust modal scraping based on your HTML ---
+    // Build & publish inventory index (for modal later)
+    const invMaps = buildPetInventoryIndexFromPage();
+    await gmSet(INV_INDEX_KEY, invMaps);
+
+    // Modal scraping
     async function waitForModalData(timeoutMs = COLLECT_TIMEOUT_MS) {
       const start = performance.now();
 
@@ -374,53 +427,45 @@ if (!isExceptionPage()) {
           continue;
         }
 
-        // MAIN = the only 110px image in Row 1
         let mainImgEl =
           body.querySelector("img[style*='width:110px']") ||
           body.querySelector("img[style*='height:110px']");
-
-        // Fallback (rare): any big image in the first row container
         if (!mainImgEl) {
           const firstRow = Array.from(body.querySelectorAll("div"))
-            .find(d => /display\s*:\s*flex/i.test(d.getAttribute("style") || "") &&
-                       /align-items\s*:\s*flex-start/i.test(d.getAttribute("style") || ""));
-          if (firstRow) {
-            mainImgEl = firstRow.querySelector("img");
-          }
+            .find(d =>
+              /display\s*:\s*flex/i.test(d.getAttribute("style") || "") &&
+              /align-items\s*:\s*flex-start/i.test(d.getAttribute("style") || "")
+            );
+          if (firstRow) mainImgEl = firstRow.querySelector("img");
         }
-
         const mainSrc = mainImgEl?.getAttribute("src") || null;
         let mainName = truncate(mainImgEl?.getAttribute("alt") || "", 80);
         if (!mainName) mainName = truncate(extractMainNameFromModal(body), 80);
 
-        // LINKS = 44px thumbnail images inside Linked Effects cards
         const linkedThumbs = Array.from(
           body.querySelectorAll("img[style*='width:44px'][style*='height:44px']")
         );
-
         const linked1El = linkedThumbs[0] || null;
         const linked2El = linkedThumbs[1] || null;
 
         const linked1Src = linked1El?.getAttribute("src") || null;
         const linked2Src = linked2El?.getAttribute("src") || null;
 
-        // Names: parse "Link 1 — Name" / "Link 2 — Name"
         const divs = Array.from(body.querySelectorAll("div"));
         const link1Div = divs.find(d => /Link\s*1\s*[–—-]/i.test(d.textContent || ""));
         const linkedName = link1Div
-          ? truncate(((link1Div.textContent || "").match(/Link\s*1\s*[–—-]\s*(.*?)(?:\s*\(|$)/i) || [,""])[1], 80)
+          ? truncate(((link1Div.textContent || "").match(/Link\s*1\s*[–—-]\s*(.*?)(?:\s*\(|$)/i) || ["",""])[1], 80)
           : "";
-
         const link2Div = divs.find(d => /Link\s*2\s*[–—-]/i.test(d.textContent || ""));
         const linkedName2 = link2Div
-          ? truncate(((link2Div.textContent || "").match(/Link\s*2\s*[–—-]\s*(.*?)(?:\s*\(|$)/i) || [,""])[1], 80)
+          ? truncate(((link2Div.textContent || "").match(/Link\s*2\s*[–—-]\s*(.*?)(?:\s*\(|$)/i) || ["",""])[1], 80)
           : "";
 
         if (DEBUG_HILITE) {
           try {
-            if (mainImgEl) mainImgEl.style.outline = "2px solid #26c281";      // green
-            if (linked1El) linked1El.style.outline = "2px solid #00cfff";      // cyan
-            if (linked2El) linked2El.style.outline = "2px solid #b066ff";      // violet
+            if (mainImgEl) mainImgEl.style.outline = "2px solid #26c281";
+            if (linked1El) linked1El.style.outline = "2px solid #00cfff";
+            if (linked2El) linked2El.style.outline = "2px solid #b066ff";
           } catch {}
         }
 
@@ -428,21 +473,31 @@ if (!isExceptionPage()) {
           const toAbs = (src) => new URL(src, location.href).href;
           return {
             main: toAbs(mainSrc),
-            linked:  linked1Src ? toAbs(linked1Src) : null,
+            linked: linked1Src ? toAbs(linked1Src) : null,
             linked2: linked2Src ? toAbs(linked2Src) : null,
             mainName,
             linkedName,
             linkedName2
           };
         }
-
         await new Promise(r => requestAnimationFrame(r));
       }
       return null;
     }
 
+    const snapshotFromInvEntry = (ent) => {
+      if (!ent) return null;
+      return {
+        id: String(ent.id),
+        race: cleanText(ent.race || ""),
+        atk: Number.isFinite(ent.atk) ? ent.atk : 0,
+        def: Number.isFinite(ent.def) ? ent.def : 0,
+        powerValue: Number.isFinite(ent.powerValue) ? ent.powerValue : null,
+        name: cleanText(ent.name || "")
+      };
+    };
+
     for (let i = startIndex; i < petIds.length; i++) {
-      // Pause/resume if hidden
       if (document.hidden) {
         setStatus({ state: "paused", msg: `Paused at ${i}/${petIds.length}. Focus /pets.php to continue.` });
         await waitUntilVisible();
@@ -462,9 +517,31 @@ if (!isExceptionPage()) {
         if (modal) modal.style.display = "none";
       }
 
-      if (data?.main) pairs[petId] = data;
+      if (data?.main) {
+        let linked1Id = null, linked2Id = null;
+        try {
+          if (data.linked || data.linkedName) {
+            linked1Id = findPetIdForImageOrName(data.linked, data.linkedName, invMaps);
+          }
+          if (data.linked2 || data.linkedName2) {
+            linked2Id = findPetIdForImageOrName(data.linked2, data.linkedName2, invMaps);
+          }
+        } catch {}
 
-      // Save progress after each pet
+        const mainEnt = invMaps.index[petId];
+        const l1Ent = linked1Id ? invMaps.index[linked1Id] : null;
+        const l2Ent = linked2Id ? invMaps.index[linked2Id] : null;
+
+        pairs[petId] = {
+          ...data,
+          linked1Id: linked1Id || null,
+          linked2Id: linked2Id || null,
+          mainStats: snapshotFromInvEntry(mainEnt),
+          link1Stats: snapshotFromInvEntry(l1Ent),
+          link2Stats: snapshotFromInvEntry(l2Ent)
+        };
+      }
+
       await gmSet(PROGRESS_KEY, {
         token,
         petIdsHash,
@@ -480,6 +557,59 @@ if (!isExceptionPage()) {
   }
 
   // =========================
+  // Verify: apply current index to cached payload
+  // =========================
+  function applyInventoryVerificationToCachedPayload(payload, invMaps) {
+    if (!payload || !payload.pairs || !invMaps || !invMaps.index) {
+      return { changedCount: 0, payload };
+    }
+    const pairs = payload.pairs;
+    let changed = 0;
+
+    const same = (a, b) => {
+      if (!a && !b) return true;
+      if (!a || !b) return false;
+      return (
+        String(a.id || "") === String(b.id || "") &&
+        cleanText(a.race || "") === cleanText(b.race || "") &&
+        Number(a.atk || 0) === Number(b.atk || 0) &&
+        Number(a.def || 0) === Number(b.def || 0) &&
+        (a.powerValue == null ? b.powerValue == null : Number(a.powerValue) === Number(b.powerValue)) &&
+        cleanText(a.name || "") === cleanText(b.name || "")
+      );
+    };
+
+    const snap = (ent) => {
+      if (!ent) return null;
+      return {
+        id: String(ent.id),
+        race: cleanText(ent.race || ""),
+        atk: Number.isFinite(ent.atk) ? ent.atk : 0,
+        def: Number.isFinite(ent.def) ? ent.def : 0,
+        powerValue: Number.isFinite(ent.powerValue) ? ent.powerValue : null,
+        name: cleanText(ent.name || "")
+      };
+    };
+
+    for (const [mainId, pair] of Object.entries(pairs)) {
+      const mainNow = invMaps.index[mainId];
+      const l1Now = pair.linked1Id ? invMaps.index[pair.linked1Id] : null;
+      const l2Now = pair.linked2Id ? invMaps.index[pair.linked2Id] : null;
+
+      const mainNew = snap(mainNow);
+      const l1New = snap(l1Now);
+      const l2New = snap(l2Now);
+
+      if (!same(pair.mainStats, mainNew)) { pair.mainStats = mainNew; changed++; }
+      if (!same(pair.link1Stats, l1New)) { pair.link1Stats = l1New; changed++; }
+      if (!same(pair.link2Stats, l2New)) { pair.link2Stats = l2New; changed++; }
+    }
+
+    const newPayload = { ...payload, capturedAt: Date.now(), pairs };
+    return { changedCount: changed, payload: newPayload };
+  }
+
+  // =========================
   // Name extraction (STRICT + CLEAN)
   // =========================
   function extractMainNameFromModal(modalBody) {
@@ -490,8 +620,6 @@ if (!isExceptionPage()) {
     const t = cleanText(el?.textContent || "");
     return looksLikeJunk(t) ? "" : t;
   }
-
-  // Back-compat single-link extractor (used as fallback for Link 1 only)
   function extractLinkedNameFromModal(modalBody) {
     const divs = Array.from(modalBody.querySelectorAll("div"));
     const lineEl = divs.find(d => /^Link\s*\d+\s*[—-]\s*/i.test(cleanText(d.textContent || "")));
@@ -501,7 +629,6 @@ if (!isExceptionPage()) {
     const name = cleanText(m ? m[1] : "");
     return looksLikeJunk(name) ? "" : name;
   }
-
   function looksLikeJunk(t) {
     if (!t) return true;
     const bad = ["ATK", "DEF", "Effect", "Linked Effects", "Contributes", "Unlink", "PVE", "PVP"];
@@ -510,10 +637,10 @@ if (!isExceptionPage()) {
   }
 
   // =========================
-  // Render dock (two linked overlays; no fallback to main)
+  // Render dock (click -> details modal)
   // =========================
   async function renderFromCache() {
-    if (isExceptionPage()) return; // ⬅️ guard
+    if (isExceptionPage()) return;
     const dockList = document.getElementById("petLinksDockList");
     const statusEl = document.getElementById("petLinksDockStatus");
     if (!dockList || !statusEl) return;
@@ -536,11 +663,10 @@ if (!isExceptionPage()) {
 
     const frag = document.createDocumentFragment();
 
-    for (const [, pair] of entries) {
+    for (const [petId, pair] of entries) {
       const wrap = document.createElement("div");
       wrap.className = "petPair";
 
-      // Tooltip: include present names only
       const names = [
         cleanText(pair.mainName || ""),
         cleanText(pair.linkedName || ""),
@@ -554,7 +680,21 @@ if (!isExceptionPage()) {
       main.alt = "";
       wrap.appendChild(main);
 
-      // Only show bubbles if actual linked thumbnails are present
+      // Click → details
+      main.addEventListener("click", async (e) => {
+        e.preventDefault();
+        try {
+          const invMaps = await gmGet(INV_INDEX_KEY, null);
+          if (!invMaps || !invMaps.index) {
+            showDetailsModal(`<h3>Details unavailable</h3><div class="meta">Open <b>/pets.php</b> and click <b>Attack</b> once to refresh the cache, then try again.</div>`);
+            return;
+          }
+          renderPetDetailsModal(petId, pair, invMaps);
+        } catch (err) {
+          showDetailsModal(`<h3>Error</h3><div class="meta">${escapeHtml(String(err.message || err))}</div>`);
+        }
+      });
+
       if (pair.linked) {
         const linked1 = document.createElement("img");
         linked1.className = "linked";
@@ -580,24 +720,23 @@ if (!isExceptionPage()) {
   }
 
   async function renderPending() {
-    if (isExceptionPage()) return; // ⬅️ guard
+    if (isExceptionPage()) return;
     const pending = await gmGet(PENDING_KEY, null);
     const label = cleanText(pending?.label || "");
     if (label) setMsg(`<b>${escapeHtml(label)}</b>`);
   }
 
   async function renderStatus() {
-    if (isExceptionPage()) return; // ⬅️ guard
+    if (isExceptionPage()) return;
     const s = await gmGet(STATUS_KEY, null);
     if (!s) return;
-
     if (s.state === "challenge" || s.state === "error") {
       setMsg(`<b>${escapeHtml(s.msg || "")}</b>`);
     }
   }
 
   // =========================
-  // In-modal Tools: Clear single set / manage sets
+  // In-modal Tools
   // =========================
   function installAttackModalObserver() {
     const ensure = () => ensureModalCacheTools();
@@ -609,7 +748,6 @@ if (!isExceptionPage()) {
   async function ensureModalCacheTools() {
     const attackBtn = document.querySelector(ATTACK_BTN_SELECTOR);
     if (!attackBtn) return;
-
     if (document.getElementById("petdockSetCacheTools")) return;
 
     const wrap = document.createElement("div");
@@ -655,7 +793,6 @@ if (!isExceptionPage()) {
     list.style.display = "flex";
     list.style.flexDirection = "column";
     list.style.gap = "6px";
-
     panel.appendChild(list);
 
     clearThisBtn.addEventListener("click", async () => {
@@ -680,12 +817,8 @@ if (!isExceptionPage()) {
 
     manageBtn.addEventListener("click", () => {
       const visible = panel.style.display !== "none";
-      if (visible) {
-        panel.style.display = "none";
-      } else {
-        populateManageList(list);
-        panel.style.display = "block";
-      }
+      if (visible) panel.style.display = "none";
+      else { populateManageList(list); panel.style.display = "block"; }
     });
 
     wrap.appendChild(clearThisBtn);
@@ -792,17 +925,14 @@ if (!isExceptionPage()) {
     `;
     document.body.appendChild(dock);
 
-    // Collapsible
     dock.querySelector("#petDockToggle")?.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();
-
       const collapsed = !!(await gmGet(DOCK_COLLAPSE_KEY, false));
       await gmSet(DOCK_COLLAPSE_KEY, !collapsed);
       applyCollapsedState(!collapsed);
     });
 
-    // Draggable (drag header)
     makeDockDraggable(dock, dock.querySelector("#petLinksDockHeader"));
   }
 
@@ -812,7 +942,6 @@ if (!isExceptionPage()) {
 
     const pos = await gmGet(DOCK_POS_KEY, null);
     if (pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
-      // Use explicit position instead of middle-left transform
       dock.style.left = `${pos.left}px`;
       dock.style.top = `${pos.top}px`;
       dock.style.transform = `none`;
@@ -837,13 +966,11 @@ if (!isExceptionPage()) {
     if (!dock || !handle) return;
 
     handle.style.cursor = "grab";
-
     let dragging = false;
     let startX = 0, startY = 0;
     let startLeft = 0, startTop = 0;
 
     handle.addEventListener("pointerdown", (e) => {
-      // Don't start drag if clicking the toggle button
       if (e.target && e.target.id === "petDockToggle") return;
 
       dragging = true;
@@ -855,7 +982,6 @@ if (!isExceptionPage()) {
       startLeft = rect.left;
       startTop = rect.top;
 
-      // Switch to absolute pixels (disable centering transform)
       dock.style.transform = "none";
       dock.style.left = `${rect.left}px`;
       dock.style.top = `${rect.top}px`;
@@ -869,22 +995,18 @@ if (!isExceptionPage()) {
 
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
-
       let newLeft = startLeft + dx;
       let newTop = startTop + dy;
 
-      // Keep inside viewport
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const rect = dock.getBoundingClientRect();
-
       newLeft = Math.max(0, Math.min(vw - rect.width, newLeft));
       newTop = Math.max(0, Math.min(vh - rect.height, newTop));
 
       dock.style.left = `${newLeft}px`;
       dock.style.top = `${newTop}px`;
 
-      // Persist (throttled-ish)
       await gmSet(DOCK_POS_KEY, { left: newLeft, top: newTop });
     });
 
@@ -907,43 +1029,35 @@ if (!isExceptionPage()) {
         top: 50%;
         transform: translateY(-50%);
         z-index: ${DOCK_Z_INDEX};
-
         width: ${DOCK_WIDTH_PX}px;
         padding: 10px;
         border-radius: 14px;
-
         background: rgba(20, 22, 37, 0.72);
         border: 1px solid rgba(43, 46, 73, 0.85);
         box-shadow: 0 10px 28px rgba(0,0,0,.45);
-
         backdrop-filter: blur(8px);
         -webkit-backdrop-filter: blur(8px);
-
         color: #fff;
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
         user-select: none;
       }
-
       #petLinksDockHeader{
         display:flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-
         font-weight: 800;
         font-size: 12px;
         padding: 0 2px 8px 2px;
         border-bottom: 1px solid rgba(43, 46, 73, 0.8);
         margin-bottom: 10px;
       }
-
       #petLinksDockStatus{
         font-weight: 700;
         font-size: 11px;
         color: #9aa0be;
         white-space: nowrap;
       }
-
       #petDockToggle{
         border: 1px solid rgba(43,46,73,.95);
         background: rgba(17, 19, 32, .9);
@@ -955,7 +1069,6 @@ if (!isExceptionPage()) {
         border-radius: 8px;
         cursor: pointer;
       }
-
       #petdockMsg{
         color: #ffcc66;
         font-size: 12px;
@@ -963,72 +1076,55 @@ if (!isExceptionPage()) {
         padding: 6px 2px 10px 2px;
         min-height: 18px;
       }
-
-      /* Scrollable list but scrollbar hidden + border none */
       #petLinksDockList{
         display:flex;
         flex-direction: column;
         gap: 12px;
         max-height: 80vh;
         overflow: auto;
-
         border: none;
         scrollbar-width: none;
         -ms-overflow-style: none;
         padding-right: 2px;
         padding-bottom: 8px;
       }
-      #petLinksDockList::-webkit-scrollbar{
-        width: 0;
-        height: 0;
-      }
-
+      #petLinksDockList::-webkit-scrollbar{ width: 0; height: 0; }
       .petPair{
         position: relative;
         width: 76px;
         height: 76px;
         margin-left: 6px;
       }
-
       .petPair .main{
         width: 76px;
         height: 76px;
         border-radius: 50%;
         object-fit: cover;
         display: block;
-
         border: 2px solid rgba(43, 46, 73, 0.95);
         box-shadow: 0 6px 16px rgba(0,0,0,.35);
         background: #0f1120;
       }
-
-      /* Link 1 (bottom-right) */
       .petPair .linked{
         position: absolute;
         right: -8px;
         bottom: -8px;
-
         width: ${LINKED_SIZE_PX}px;
         height: ${LINKED_SIZE_PX}px;
         border-radius: 50%;
         object-fit: cover;
-
         border: 2px solid rgba(43, 46, 73, 0.95);
         box-shadow: 0 6px 16px rgba(0,0,0,.35);
         background: #0f1120;
       }
-
-      /* Link 2 (bottom-left) */
       .petPair .linked2{
         position: absolute;
         right: -40px;
         bottom: -8px;
-
         width: ${LINKED_SIZE_PX}px;
         height: ${LINKED_SIZE_PX}px;
         border-radius: 50%;
         object-fit: cover;
-
         border: 2px solid rgba(43, 46, 73, 0.95);
         box-shadow: 0 6px 16px rgba(0,0,0,.35);
         background: #0f1120;
@@ -1044,26 +1140,14 @@ if (!isExceptionPage()) {
     const el = document.getElementById("petdockMsg");
     if (el) el.innerHTML = html;
   }
-
-  function setStatus(obj) {
-    gmSet(STATUS_KEY, { ...obj, at: Date.now() });
-  }
-
-  function cleanText(s) {
-    return (s || "").replace(/\s+/g, " ").trim();
-  }
-
-  function truncate(s, maxLen = 80) {
-    s = cleanText(s);
-    return s.length > maxLen ? s.slice(0, maxLen - 1) + "…" : s;
-  }
-
+  function setStatus(obj) { gmSet(STATUS_KEY, { ...obj, at: Date.now() }); }
+  function cleanText(s) { return (s || "").replace(/\s+/g, " ").trim(); }
+  function truncate(s, maxLen = 80) { s = cleanText(s); return s.length > maxLen ? s.slice(0, maxLen - 1) + "…" : s; }
   function escapeHtml(s) {
     return String(s).replace(/[&<>\"']/g, c => ({
       "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"
     }[c]));
   }
-
   function waitFor(checkFn, timeoutMs = 8000) {
     return new Promise(resolve => {
       const start = performance.now();
@@ -1074,7 +1158,6 @@ if (!isExceptionPage()) {
       })();
     });
   }
-
   function waitUntilVisible() {
     if (!document.hidden) return Promise.resolve();
     return new Promise(resolve => {
@@ -1089,22 +1172,13 @@ if (!isExceptionPage()) {
       window.addEventListener("focus", onVis);
     });
   }
-
-  function hashList(arr) {
-    return arr.join("|");
-  }
-
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
   async function gmGet(key, def) {
     try {
       const v = GM_getValue(key, def);
       return (v && typeof v.then === "function") ? await v : v;
-    } catch {
-      return def;
-    }
+    } catch { return def; }
   }
-
   async function gmSet(key, val) {
     try {
       const r = GM_setValue(key, val);
@@ -1118,37 +1192,28 @@ if (!isExceptionPage()) {
     const nm = cleanText((setName || "").toLowerCase());
     return `${n}::${nm}`;
   }
-
   function lsReadMap() {
     try {
       const raw = localStorage.getItem(LOCAL_CACHE_BUCKET);
       if (!raw) return {};
       const obj = JSON.parse(raw);
       return (obj && typeof obj === "object") ? obj : {};
-    } catch {
-      return {};
-    }
+    } catch { return {}; }
   }
-
   function lsWriteMap(map) {
-    try {
-      localStorage.setItem(LOCAL_CACHE_BUCKET, JSON.stringify(map || {}));
-    } catch {}
+    try { localStorage.setItem(LOCAL_CACHE_BUCKET, JSON.stringify(map || {})); } catch {}
   }
-
   function getCachedBySetKey(setKey) {
     if (!setKey) return null;
     const map = lsReadMap();
     return map[setKey] || null;
   }
-
   function isLocalCacheFresh(entry) {
     if (!entry) return false;
-    if (!LOCAL_CACHE_TTL_MS || LOCAL_CACHE_TTL_MS <= 0) return true; // no expiry
+    if (!LOCAL_CACHE_TTL_MS || LOCAL_CACHE_TTL_MS <= 0) return true;
     const age = Date.now() - Number(entry.savedAt || 0);
     return age >= 0 && age <= LOCAL_CACHE_TTL_MS;
   }
-
   function putCachedBySetKey(setKey, data) {
     if (!setKey) return;
     const map = lsReadMap();
@@ -1159,16 +1224,11 @@ if (!isExceptionPage()) {
     };
     lsWriteMap(map);
   }
-
   function delCachedBySetKey(setKey) {
     if (!setKey) return;
     const map = lsReadMap();
-    if (map[setKey]) {
-      delete map[setKey];
-      lsWriteMap(map);
-    }
+    if (map[setKey]) { delete map[setKey]; lsWriteMap(map); }
   }
-
   function listCachedSetEntries() {
     const map = lsReadMap();
     const out = [];
@@ -1180,9 +1240,205 @@ if (!isExceptionPage()) {
         count: entry?.payload?.pairs ? Object.keys(entry.payload.pairs).length : undefined
       });
     }
-    // Newest first
     out.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
     return out;
   }
 
+  // ---------- Numeric + inventory helpers ----------
+  function extractFirstNumber(s) {
+    const m = String(s || "").replace(/[,_]/g,"").match(/-?\d+(?:\.\d+)?/);
+    return m ? Number(m[0]) : null;
+  }
+  function toInt(s) {
+    const n = extractFirstNumber(s);
+    return Number.isFinite(n) ? Math.round(n) : 0;
+  }
+  function buildPetInventoryIndexFromPage() {
+    const boxes = document.querySelectorAll('.slot-box[data-pet-inv-id]');
+    const index = {};
+    const byFile = new Map();
+    const byName = new Map();
+
+    for (const box of boxes) {
+      const id = box.getAttribute('data-pet-inv-id');
+      const imgEl = box.querySelector('.pet-img-wrap img');
+      const src = imgEl?.getAttribute('src') || "";
+      const alt = cleanText(imgEl?.getAttribute('alt') || "");
+      const race = cleanText(box.querySelector('.pet-race b')?.textContent || "");
+      const atk = toInt(box.querySelector('.pet-atk')?.textContent || "0");
+      const def = toInt(box.querySelector('.pet-def')?.textContent || "0");
+      const powerText = cleanText(box.querySelector('.pet-power')?.textContent || "");
+      const powerValue = extractFirstNumber(powerText);
+      const absSrc = src ? new URL(src, location.href).href : "";
+      const filename = absSrc.split('/').pop() || "";
+
+      index[id] = { id, name: alt, race, atk, def, powerText, powerValue, imgSrc: absSrc, filename };
+      if (filename && !byFile.has(filename)) byFile.set(filename, id);
+      if (alt && !byName.has(alt.toLowerCase())) byName.set(alt.toLowerCase(), id);
+    }
+    return { index, byFile, byName };
+  }
+  function findPetIdForImageOrName(src, name, maps) {
+    if (!src && !name) return null;
+    const filename = src ? new URL(src, location.href).pathname.split('/').pop() : "";
+    if (filename && maps.byFile.has(filename)) return maps.byFile.get(filename);
+    const key = (name || "").toLowerCase().trim();
+    if (key && maps.byName.has(key)) return maps.byName.get(key);
+    if (filename) {
+      for (const [id, ent] of Object.entries(maps.index)) {
+        if ((ent.filename && ent.filename === filename) || (ent.imgSrc && ent.imgSrc.endsWith(filename))) return id;
+      }
+    }
+    return null;
+  }
+
+  // ---------- Contributions + details modal ----------
+  function linkFactor(isSameRace, isLink1) { return isSameRace ? (isLink1 ? 0.60 : 0.35) : (isLink1 ? 0.50 : 0.25); }
+
+  function ensureDetailsModalCss() {
+    if (document.getElementById("petdockDetailStyle")) return;
+    const style = document.createElement("style");
+    style.id = "petdockDetailStyle";
+    style.textContent = `
+      #petdockDetailMask {
+        position: fixed; inset: 0; background: rgba(0,0,0,.45);
+        display: none; z-index: ${DOCK_Z_INDEX + 1};
+      }
+      #petdockDetail {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+        min-width: 320px; max-width: 520px;
+        background: rgba(20,22,37,0.95); border:1px solid rgba(43,46,73,.9);
+        border-radius: 12px; color: #fff; font-family: inherit; padding: 14px;
+        box-shadow: 0 18px 40px rgba(0,0,0,.5); z-index: ${DOCK_Z_INDEX + 2};
+      }
+      #petdockDetail h3 { margin: 0 0 8px; font-size: 14px; font-weight: 800; }
+      #petdockDetail .meta { color:#cfd3ef; font-size:12px; margin-bottom:10px; }
+      #petdockDetail .row { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; padding:6px 0; border-top:1px solid rgba(43,46,73,.5); }
+      #petdockDetail .row:first-of-type { border-top:none; }
+      #petdockDetail .lbl { font-weight:700; font-size:12px; color:#9aa0be; }
+      #petdockDetail .v { font-size:13px; }
+      #petdockDetail .sub { color:#9aa0be; font-size:11px; }
+      #petdockDetail .contrib { color:#ffcc66; font-weight:700; }
+      #petdockDetail .warn { color:#f28b82; font-weight:700; }
+      #petdockDetail .btnbar { margin-top:10px; display:flex; justify-content:flex-end; gap:8px; }
+      #petdockDetail .btn { border:1px solid rgba(43,46,73,.95); background:rgba(17,19,32,.9); color:#fff; border-radius:8px; padding:6px 10px; font-weight:700; cursor:pointer; }
+    `;
+    document.head.appendChild(style);
+  }
+  function ensureDetailsModalShell() {
+    if (document.getElementById("petdockDetailMask")) return;
+    const mask = document.createElement("div");
+    mask.id = "petdockDetailMask";
+    const modal = document.createElement("div");
+    modal.id = "petdockDetail";
+    mask.appendChild(modal);
+    document.body.appendChild(mask);
+    mask.addEventListener("click", (e) => { if (e.target === mask) mask.style.display = "none"; });
+  }
+  function showDetailsModal(html) {
+    ensureDetailsModalCss();
+    ensureDetailsModalShell();
+    const mask = document.getElementById("petdockDetailMask");
+    const box = document.getElementById("petdockDetail");
+    box.innerHTML = html + `<div class="btnbar"><button class="btn" type="button" id="petdockDetailClose">Close</button></div>`;
+    mask.style.display = "block";
+    box.querySelector("#petdockDetailClose")?.addEventListener("click", () => (mask.style.display = "none"));
+  }
+  function fmtPctOrVal(v) { if (v == null || !Number.isFinite(v)) return "—"; const s = Math.abs(v) % 1 ? v.toFixed(2) : String(Math.round(v)); return s; }
+
+  function renderPetDetailsModal(mainId, pair, invIndex) {
+    const idx = invIndex?.index || {};
+    const main = idx[mainId];
+    const l1 = pair.linked1Id ? idx[pair.linked1Id] : null;
+    const l2 = pair.linked2Id ? idx[pair.linked2Id] : null;
+
+    const name = cleanText(pair.mainName || main?.name || "Main Pet");
+    const same1 = (main && l1) ? (cleanText(main.race).toLowerCase() === cleanText(l1.race).toLowerCase()) : false;
+    const same2 = (main && l2) ? (cleanText(main.race).toLowerCase() === cleanText(l2.race).toLowerCase()) : false;
+
+    const f1 = linkFactor(same1, true);
+    const f2 = linkFactor(same2, false);
+
+    const l1AtkC = l1 ? Math.round(l1.atk * f1) : null;
+    const l1DefC = l1 ? Math.round(l1.def * f1) : null;
+    const l2AtkC = l2 ? Math.round(l2.atk * f2) : null;
+    const l2DefC = l2 ? Math.round(l2.def * f2) : null;
+
+      const totalAtk =
+            (main?.atk ?? 0) +
+            (l1AtkC ?? 0) +
+            (l2AtkC ?? 0);
+
+      const totalDef =
+            (main?.def ?? 0) +
+            (l1DefC ?? 0) +
+            (l2DefC ?? 0);
+
+    // Power: scale numeric unless link pet is in the excluded IDs
+    const l1PowerC = (l1 && !POWER_EXCLUDED_IDS.has(String(l1.id))) && Number.isFinite(l1.powerValue) ? (l1.powerValue * f1) : null;
+    const l2PowerC = (l2 && !POWER_EXCLUDED_IDS.has(String(l2.id))) && Number.isFinite(l2.powerValue) ? (l2.powerValue * f2) : null;
+
+    const l1PowerNote = (l1 && POWER_EXCLUDED_IDS.has(String(l1.id))) ? `<span class="warn">excluded</span>` : "";
+    const l2PowerNote = (l2 && POWER_EXCLUDED_IDS.has(String(l2.id))) ? `<span class="warn">excluded</span>` : "";
+
+    const html = `
+      <h3>${escapeHtml(name)}</h3>
+      <div class="meta">
+        ${main ? `Race: <b>${escapeHtml(main.race || "—")}</b><br>
+        ATK ${main.atk ?? "—"}  → <span class="contrib">+${totalAtk.toLocaleString() ?? "—"}</span> •
+        DEF ${main.def ?? "—"}  → <span class="contrib">+${totalDef.toLocaleString() ?? "—"}</span><br>
+        Power: ${escapeHtml(main.powerText || "—")}` : "Main pet not found in inventory index."}
+      </div>
+
+      <div class="row">
+        <div>
+          <div class="lbl">Link 1${l1 ? "" : " (not found)"}</div>
+          <div class="v">
+            ${l1 ? `${escapeHtml(l1.name)} — Race: <b>${escapeHtml(l1.race || "—")}</b>
+            <span class="sub">(${same1 ? "same race, 60%" : "diff race, 50%"})</span><br>
+            ATK ${l1.atk} → <span class="contrib">+${l1AtkC ?? "—"}</span> •
+            DEF ${l1.def} → <span class="contrib">+${l1DefC ?? "—"}</span><br>
+            Power: ${escapeHtml(l1.powerText || "—")}
+            ${Number.isFinite(l1PowerC) ? `→ <span class="contrib">+${fmtPctOrVal(l1PowerC)}</span>` : l1PowerNote || ""}`
+            : "—"}
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <div class="lbl">Link 2${l2 ? "" : " (not found)"}</div>
+          <div class="v">
+            ${l2 ? `${escapeHtml(l2.name)} — Race: <b>${escapeHtml(l2.race || "—")}</b>
+            <span class="sub">(${same2 ? "same race, 35%" : "diff race, 25%"})</span><br>
+            ATK ${l2.atk} → <span class="contrib">+${l2AtkC ?? "—"}</span> •
+            DEF ${l2.def} → <span class="contrib">+${l2DefC ?? "—"}</span><br>
+            Power: ${escapeHtml(l2.powerText || "—")}
+            ${Number.isFinite(l2PowerC) ? `→ <span class="contrib">+${fmtPctOrVal(l2PowerC)}</span>` : l2PowerNote || ""}`
+            : "—"}
+          </div>
+        </div>
+      </div>
+    `;
+    showDetailsModal(html);
+  }
+
+  // Enable opening details by clicking grid images (if pair/index exist)
+  async function onGridImageClick(e) {
+    const img = e.target && e.target.closest(".grid .slot-box .pet-img-wrap img");
+    if (!img) return;
+    const slot = img.closest(".slot-box");
+    if (!slot) return;
+    const petId = slot.getAttribute("data-pet-inv-id");
+    if (!petId) return;
+
+    const cache = await gmGet(CACHE_KEY, null);
+    const pair = cache?.pairs?.[petId];
+    if (!pair) return;
+
+    const invMaps = await gmGet(INV_INDEX_KEY, null);
+    if (!invMaps || !invMaps.index) return;
+
+    renderPetDetailsModal(petId, pair, invMaps);
+  }
 })();
