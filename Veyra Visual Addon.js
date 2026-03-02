@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      1.8.1
+// @version      1.9.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -1080,7 +1080,9 @@ function modBlacksmith() {
 
     const runBtn = document.createElement('button');
     runBtn.type = 'button';
-    runBtn.textContent = 'Forge x times';
+    // ⬇️ keep a clean default label
+    const RUN_LABEL_DEFAULT = 'Forge x times';
+    runBtn.textContent = RUN_LABEL_DEFAULT;
     runBtn.style.cssText = `
       flex:1;
       background:var(--accent);
@@ -1113,6 +1115,21 @@ function modBlacksmith() {
 
     let stop = false;
 
+    // Small helper for pluralization (optional)
+    const pluralize = (n, s, p) => (n === 1 ? s : (p || s + 's'));
+
+    // ⬇️ Countdown updater
+    const setCountdownLabel = (remaining) => {
+      // Example: "Forging 9…" (or "Forging 9 left…")
+      //runBtn.textContent = `Forging ${remaining}${remaining > 0 ? '…' : ''}`;
+      runBtn.textContent = `Forging ${remaining}`;
+    };
+
+    // ⬇️ Reset label to default
+    const resetRunBtnLabel = () => {
+      runBtn.textContent = RUN_LABEL_DEFAULT;
+    };
+
     runBtn.onclick = async () => {
       const TIMES = parseInt(box.value);
       if (!TIMES || TIMES < 1) return alert('Enter a valid number');
@@ -1124,6 +1141,9 @@ function modBlacksmith() {
       runBtn.disabled = true;
       box.disabled = true;
       stopBtn.style.display = '';
+
+      // Initial countdown label
+      setCountdownLabel(TIMES);
 
       for (let i = 0; i < TIMES; i++) {
         if (stop) break;
@@ -1140,12 +1160,25 @@ function modBlacksmith() {
           break;
         }
 
-        await new Promise(r => setTimeout(r, DELAY));
+        // Update countdown BEFORE waiting, so UI feels immediate:
+        const remaining = TIMES - (i + 1);
+        setCountdownLabel(remaining);
+
+        if (remaining > 0) {
+          await new Promise(r => setTimeout(r, DELAY));
+        }
       }
 
       runBtn.disabled = false;
       box.disabled = false;
       stopBtn.style.display = 'none';
+
+      // If user pressed stop, reflect that briefly before overlay:
+      if (stop) {
+        runBtn.textContent = 'Stopped';
+      } else {
+        resetRunBtnLabel();
+      }
 
       // BIG VISIBLE MESSAGE
       const overlay = document.createElement('div');
@@ -1162,7 +1195,9 @@ function modBlacksmith() {
       `;
 
       const panel = document.createElement('div');
-      panel.textContent = 'Forge run complete ✔ Refreshing...';
+      panel.textContent = stop
+        ? 'Forge stopped ✔ Refreshing...'
+        : 'Forge run complete ✔ Refreshing...';
       panel.style.cssText = `
         background:linear-gradient(145deg,#1f1f1f,#2c2c2c);
         color:#fff;
@@ -1198,7 +1233,6 @@ function modBlacksmith() {
     };
   });
 })();
-
 
 
 function modForge() {
@@ -1316,6 +1350,168 @@ function modForge() {
 };
 
 //monstercards and loot section
+
+function modMonsterCards(){
+    const cards = document.querySelectorAll('.monster-card[data-dead="1"][data-monster-id]');
+
+    // Robust numeric parser (handles commas, spaces, decimal comma, zero-width, units)
+    const parseNumeric = (t) => {
+        if (t == null) return NaN;
+        const normalized = String(t)
+        .replace(/[\u00A0\u2007\u202F]/g, ' ')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '');
+        const m = normalized.match(/[-+]?\d[\d.,]*(?:[eE][-+]?\d+)?/);
+        if (!m) return NaN;
+        let token = m[0].trim();
+        const hasComma = token.includes(',');
+        const hasDot = token.includes('.');
+        if (hasComma && hasDot) {
+            token = token.replace(/,/g, ''); // "1,234.56"
+        } else if (hasComma && !hasDot) {
+            const commaCount = (token.match(/,/g) || []).length;
+            token = (commaCount === 1) ? token.replace(',', '.') : token.replace(/,/g, '');
+        }
+        token = token.replace(/\s+/g, '');
+        const n = Number.parseFloat(token);
+        return Number.isFinite(n) ? n : NaN;
+    };
+
+    // Format integers with thousands separators
+    const formatInt = (n) => {
+        if (!Number.isFinite(n)) return '';
+        const s = Math.trunc(n).toString();
+        return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    };
+
+    // Helper: normalize label text
+    const norm = (s) => (s || '')
+    .replace(/[\u00A0\u2007\u202F]/g, ' ')
+    .trim()
+    .toLowerCase();
+
+    // --- Read level from local DOM (NO FETCH) ---
+    const lvlText = document.querySelector('.gtb-level')?.textContent || ''; // e.g., "LV 1054"
+    const lvlVal = parseNumeric(lvlText); // → 1054
+
+    cards.forEach(async (card) => {
+        const mId = card.dataset.monsterId;
+        if (!mId) return;
+
+        try {
+            const res = await fetch(`/battle.php?id=${encodeURIComponent(mId)}`, {
+                credentials: 'same-origin',
+            });
+            if (!res.ok) throw new Error(`Fetch failed for mId=${mId} (HTTP ${res.status})`);
+            const html = await res.text();
+
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            // 1) Damage done
+            const damageText = doc.querySelector('#yourDamageValue')?.textContent?.trim() || '';
+            const damageVal = parseNumeric(damageText);
+
+            // 2) EXP / DMG: Use the 3rd .stat-block in the 2nd .stat-line
+            let expPerDmgText = '';
+            (function getExpPerDmgFromSecondLine() {
+                const lines = doc.querySelectorAll('.stat-line');
+                const secondLine = lines[1]; // zero-based: this is the 2nd .stat-line
+                if (!secondLine) return;
+
+                const blocks = secondLine.querySelectorAll('.stat-block');
+                const thirdBlock = blocks[2]; // zero-based: this is the 3rd .stat-block
+
+                // Prefer the 3rd block if its label is "EXP / DMG"
+                if (thirdBlock) {
+                    const labelEl = thirdBlock.querySelector('.label, span.label');
+                    if (norm(labelEl?.textContent) === 'exp / dmg') {
+                        expPerDmgText = thirdBlock.querySelector('strong')?.textContent?.trim() || '';
+                    }
+                }
+
+                // Fallback: scan the second line for any block labeled "EXP / DMG"
+                if (!expPerDmgText && blocks.length) {
+                    for (const b of blocks) {
+                        const lbl = b.querySelector('.label, span.label');
+                        if (norm(lbl?.textContent) === 'exp / dmg') {
+                            expPerDmgText = b.querySelector('strong')?.textContent?.trim() || '';
+                            if (expPerDmgText) break;
+                        }
+                    }
+                }
+            })();
+
+            const expPerDmgVal = parseNumeric(expPerDmgText);
+
+            // 3) Base EXP gained
+            const expGainedRaw = (Number.isFinite(damageVal) && Number.isFinite(expPerDmgVal))
+            ? (damageVal * expPerDmgVal)
+            : NaN;
+
+            // 4) Conditional adjustment based on URL wave and level from .gtb-level (NO fetch for level)
+            const href = window.location.href;
+            let multiplier = 1;
+            if (href.includes('wave=3') && Number.isFinite(lvlVal) && lvlVal > 200) {
+                multiplier = 0.75;
+            } else if (href.includes('wave=5') && Number.isFinite(lvlVal) && lvlVal > 1000) {
+                multiplier = 0.75;
+            } else if (href.includes('wave=8') && Number.isFinite(lvlVal) && lvlVal > 3500) {
+                multiplier = 0.50;
+            }
+
+            const adjustedExp = Number.isFinite(expGainedRaw) ? expGainedRaw * multiplier : NaN;
+
+            // 5) Round UP (ceil) and show without decimals
+            const finalExpCeil = Number.isFinite(adjustedExp) ? Math.ceil(adjustedExp) : NaN;
+
+            // --- Update DOM ---
+
+            // A) HP row → "damage done" and damage text (original formatting)
+            const hpIcon = card.querySelector('.stat-row .stat-icon.hp');
+            const hpRow = hpIcon ? hpIcon.closest('.stat-row') : null;
+            if (hpRow) {
+                const labelEl = hpRow.querySelector('.stat-label');
+                const valueEl = hpRow.querySelector('.stat-value');
+                if (labelEl) labelEl.textContent = 'damage done';
+                if (valueEl && damageText) valueEl.textContent = damageText;
+                const hpFill = card.querySelector('.hp-bar .hp-fill');
+                if (hpFill) hpFill.style.width = '0%';
+            }
+
+            // B) Second .stat-main (ATK/DEF row) → convert to structured format like others
+            const statRows = card.querySelectorAll('.stat-row');
+            const atkDefRow = statRows[1]; // 0: HP, 1: ATK/DEF, 2: Players Joined
+            if (atkDefRow) {
+                const secondMain = atkDefRow.querySelector('.stat-main');
+                if (secondMain) {
+                    const valueToShow = expPerDmgText || (Number.isFinite(expPerDmgVal) ? String(expPerDmgVal) : '');
+                    // Rebuild the content to match the standard structure:
+                    secondMain.innerHTML = `
+            <div class="stat-label">EXP /DMG</div>
+            <div class="stat-value">${valueToShow || '—'}</div>
+          `;
+        }
+      }
+
+        // C) Third .stat-main (Players Joined row) → "EXP Gained" with conditional adjustment and ceil
+        const joinedRow = statRows[2];
+        if (joinedRow) {
+            const labelEl = joinedRow.querySelector('.stat-label');
+            const valueEl = joinedRow.querySelector('.stat-value');
+            if (labelEl) labelEl.textContent = 'EXP Gained';
+            if (valueEl) {
+                const showExp = Number.isFinite(finalExpCeil) ? formatInt(finalExpCeil) : '—';
+                // Keep chip styling if you prefer:
+                // valueEl.innerHTML = `<span class="mini-chip party-chip">${showExp}</span>`;
+                valueEl.textContent = showExp;
+            }
+        }
+
+    } catch (err) {
+        console.error('Failed to update monster card', { mId, err });
+    }
+  });
+}
 
 ////insta join via picture click
 (function () {
@@ -1631,169 +1827,6 @@ function isExcludedFromLootPlan(card) {
     if (name.includes(tag)) return true;
   }
   return false;
-}
-
-
-function modMonsterCards(){
-    const cards = document.querySelectorAll('.monster-card[data-dead="1"][data-monster-id]');
-
-    // Robust numeric parser (handles commas, spaces, decimal comma, zero-width, units)
-    const parseNumeric = (t) => {
-        if (t == null) return NaN;
-        const normalized = String(t)
-        .replace(/[\u00A0\u2007\u202F]/g, ' ')
-        .replace(/[\u200B-\u200D\uFEFF]/g, '');
-        const m = normalized.match(/[-+]?\d[\d.,]*(?:[eE][-+]?\d+)?/);
-        if (!m) return NaN;
-        let token = m[0].trim();
-        const hasComma = token.includes(',');
-        const hasDot = token.includes('.');
-        if (hasComma && hasDot) {
-            token = token.replace(/,/g, ''); // "1,234.56"
-        } else if (hasComma && !hasDot) {
-            const commaCount = (token.match(/,/g) || []).length;
-            token = (commaCount === 1) ? token.replace(',', '.') : token.replace(/,/g, '');
-        }
-        token = token.replace(/\s+/g, '');
-        const n = Number.parseFloat(token);
-        return Number.isFinite(n) ? n : NaN;
-    };
-
-    // Format integers with thousands separators
-    const formatInt = (n) => {
-        if (!Number.isFinite(n)) return '';
-        const s = Math.trunc(n).toString();
-        return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    };
-
-    // Helper: normalize label text
-    const norm = (s) => (s || '')
-    .replace(/[\u00A0\u2007\u202F]/g, ' ')
-    .trim()
-    .toLowerCase();
-
-    // --- Read level from local DOM (NO FETCH) ---
-    const lvlText = document.querySelector('.gtb-level')?.textContent || ''; // e.g., "LV 1054"
-    const lvlVal = parseNumeric(lvlText); // → 1054
-
-    cards.forEach(async (card) => {
-        const mId = card.dataset.monsterId;
-        if (!mId) return;
-
-        try {
-            const res = await fetch(`/battle.php?id=${encodeURIComponent(mId)}`, {
-                credentials: 'same-origin',
-            });
-            if (!res.ok) throw new Error(`Fetch failed for mId=${mId} (HTTP ${res.status})`);
-            const html = await res.text();
-
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-
-            // 1) Damage done
-            const damageText = doc.querySelector('#yourDamageValue')?.textContent?.trim() || '';
-            const damageVal = parseNumeric(damageText);
-
-            // 2) EXP / DMG: Use the 3rd .stat-block in the 2nd .stat-line
-            let expPerDmgText = '';
-            (function getExpPerDmgFromSecondLine() {
-                const lines = doc.querySelectorAll('.stat-line');
-                const secondLine = lines[1]; // zero-based: this is the 2nd .stat-line
-                if (!secondLine) return;
-
-                const blocks = secondLine.querySelectorAll('.stat-block');
-                const thirdBlock = blocks[2]; // zero-based: this is the 3rd .stat-block
-
-                // Prefer the 3rd block if its label is "EXP / DMG"
-                if (thirdBlock) {
-                    const labelEl = thirdBlock.querySelector('.label, span.label');
-                    if (norm(labelEl?.textContent) === 'exp / dmg') {
-                        expPerDmgText = thirdBlock.querySelector('strong')?.textContent?.trim() || '';
-                    }
-                }
-
-                // Fallback: scan the second line for any block labeled "EXP / DMG"
-                if (!expPerDmgText && blocks.length) {
-                    for (const b of blocks) {
-                        const lbl = b.querySelector('.label, span.label');
-                        if (norm(lbl?.textContent) === 'exp / dmg') {
-                            expPerDmgText = b.querySelector('strong')?.textContent?.trim() || '';
-                            if (expPerDmgText) break;
-                        }
-                    }
-                }
-            })();
-
-            const expPerDmgVal = parseNumeric(expPerDmgText);
-
-            // 3) Base EXP gained
-            const expGainedRaw = (Number.isFinite(damageVal) && Number.isFinite(expPerDmgVal))
-            ? (damageVal * expPerDmgVal)
-            : NaN;
-
-            // 4) Conditional adjustment based on URL wave and level from .gtb-level (NO fetch for level)
-            const href = window.location.href;
-            let multiplier = 1;
-            if (href.includes('wave=3') && Number.isFinite(lvlVal) && lvlVal > 200) {
-                multiplier = 0.75;
-            } else if (href.includes('wave=5') && Number.isFinite(lvlVal) && lvlVal > 1000) {
-                multiplier = 0.75;
-            } else if (href.includes('wave=8') && Number.isFinite(lvlVal) && lvlVal > 3500) {
-                multiplier = 0.50;
-            }
-
-            const adjustedExp = Number.isFinite(expGainedRaw) ? expGainedRaw * multiplier : NaN;
-
-            // 5) Round UP (ceil) and show without decimals
-            const finalExpCeil = Number.isFinite(adjustedExp) ? Math.ceil(adjustedExp) : NaN;
-
-            // --- Update DOM ---
-
-            // A) HP row → "damage done" and damage text (original formatting)
-            const hpIcon = card.querySelector('.stat-row .stat-icon.hp');
-            const hpRow = hpIcon ? hpIcon.closest('.stat-row') : null;
-            if (hpRow) {
-                const labelEl = hpRow.querySelector('.stat-label');
-                const valueEl = hpRow.querySelector('.stat-value');
-                if (labelEl) labelEl.textContent = 'damage done';
-                if (valueEl && damageText) valueEl.textContent = damageText;
-                const hpFill = card.querySelector('.hp-bar .hp-fill');
-                if (hpFill) hpFill.style.width = '0%';
-            }
-
-            // B) Second .stat-main (ATK/DEF row) → convert to structured format like others
-            const statRows = card.querySelectorAll('.stat-row');
-            const atkDefRow = statRows[1]; // 0: HP, 1: ATK/DEF, 2: Players Joined
-            if (atkDefRow) {
-                const secondMain = atkDefRow.querySelector('.stat-main');
-                if (secondMain) {
-                    const valueToShow = expPerDmgText || (Number.isFinite(expPerDmgVal) ? String(expPerDmgVal) : '');
-                    // Rebuild the content to match the standard structure:
-                    secondMain.innerHTML = `
-            <div class="stat-label">EXP /DMG</div>
-            <div class="stat-value">${valueToShow || '—'}</div>
-          `;
-        }
-      }
-
-        // C) Third .stat-main (Players Joined row) → "EXP Gained" with conditional adjustment and ceil
-        const joinedRow = statRows[2];
-        if (joinedRow) {
-            const labelEl = joinedRow.querySelector('.stat-label');
-            const valueEl = joinedRow.querySelector('.stat-value');
-            if (labelEl) labelEl.textContent = 'EXP Gained';
-            if (valueEl) {
-                const showExp = Number.isFinite(finalExpCeil) ? formatInt(finalExpCeil) : '—';
-                // Keep chip styling if you prefer:
-                // valueEl.innerHTML = `<span class="mini-chip party-chip">${showExp}</span>`;
-                valueEl.textContent = showExp;
-            }
-        }
-
-    } catch (err) {
-        console.error('Failed to update monster card', { mId, err });
-    }
-  });
 }
 
 /* =========================================================
@@ -2196,6 +2229,126 @@ window.__VV_LOOT_LOADED__ = true;
     .replace(/[\u00A0\u2007\u202F]/g, ' ')
     .trim()
     .toLowerCase();
+
+// === AUTO LEVEL LOOP (persists across refresh) ===================
+const AUTO_KEY = 'vv_auto_level_state';
+
+function loadAutoState() {
+  try { return JSON.parse(localStorage.getItem(AUTO_KEY) || 'null'); } catch { return null; }
+}
+function saveAutoState(s) {
+  localStorage.setItem(AUTO_KEY, JSON.stringify(s));
+}
+function clearAutoState() {
+  localStorage.removeItem(AUTO_KEY);
+}
+
+function isAutoActive() {
+  const s = loadAutoState();
+  return !!(s && s.active);
+}
+
+function setRunButtonState({ running, text }) {
+  const runBtn = document.querySelector('#run-exp-plan-btn');
+  if (!runBtn) return;
+  runBtn.dataset.running = running ? '1' : '0';
+  runBtn.disabled = !!running;
+  if (text) runBtn.textContent = text;
+}
+
+function setStopButtonState({ visible }) {
+  const stopBtn = document.querySelector('#stop-exp-plan-btn');
+  if (!stopBtn) return;
+  stopBtn.style.display = visible ? 'inline-block' : 'none';
+}
+
+async function runAutoCycleOnce() {
+  // Build exp map/list from current visible cards
+  await updateMonsterExpData();
+
+  // Build plan (you can swap to 'desc' if you prefer highest-EXP-first)
+  const plan = buildExpPlan({ strategy: 'asIs' });
+  renderExpPlan(plan);
+
+  // Nothing to loot? Stop the loop gracefully.
+  const ids = plan.selected.map(x => x.monsterId);
+  if (!ids.length) {
+    const panel = document.querySelector('#exp-plan-progress');
+    if (panel) panel.textContent = 'No slain monsters found to loot on this page.';
+    clearAutoState();
+    setRunButtonState({ running: false, text: 'loot to next level' });
+    setStopButtonState({ visible: false });
+    return { leveled: false, nothingToDo: true };
+  }
+
+  const stopAt = Number.isFinite(plan.needed) ? Math.ceil(plan.needed) : null;
+
+  // Loot this batch with stopAtExp to honor the "to next level" promise
+  const summary = await window.VV_LOOT.lootMonsterIds(ids, {
+    concurrency: 5,
+    stopAtExp: stopAt,
+    perLootDelayMs: 90
+  });
+
+  // If we reached or exceeded the needed EXP for this cycle, we’re done.
+  const reached = Number.isFinite(stopAt) && summary.exp >= stopAt;
+
+  return { leveled: reached, summary };
+}
+
+async function startOrContinueAutoLevel() {
+  // Mark auto as active in storage so a refresh resumes.
+  const current = loadAutoState();
+  if (!current || !current.active) {
+    const { needed } = readExpNeededFromTopBar();
+    saveAutoState({
+      active: true,
+      sessionId: Date.now(),
+      goalAtStart: Number.isFinite(needed) ? needed : null,
+      cumulativeExp: 0,
+      lastRun: Date.now()
+    });
+  }
+
+  setRunButtonState({ running: true, text: 'Auto running…' });
+  setStopButtonState({ visible: true });
+
+  try {
+    const one = await runAutoCycleOnce();
+
+    // If no work, stop. If leveled, stop. Otherwise reload to continue.
+    if (one.nothingToDo) {
+      // Do nothing — we already stopped above.
+      return;
+    }
+
+    const state = loadAutoState();
+    if (state && one.summary && Number.isFinite(one.summary.exp)) {
+      state.cumulativeExp = (state.cumulativeExp || 0) + (one.summary.exp || 0);
+      state.lastRun = Date.now();
+      saveAutoState(state);
+    }
+
+    if (one.leveled) {
+      // Reached target — clear and optionally reload to update UI.
+      clearAutoState();
+      setRunButtonState({ running: false, text: 'loot to next level' });
+      setStopButtonState({ visible: false });
+
+      // Small delay so user can read the modal, then refresh UI EXP bar.
+      setTimeout(() => window.location.reload(), 800);
+    } else {
+      // Not enough — keep the session active and refresh to pick up the next 200.
+      setTimeout(() => window.location.reload(), 800);
+    }
+  } catch (err) {
+    console.error('[AutoLevel] Cycle error:', err);
+    // On error, disable loop so it doesn’t hard-refresh endlessly.
+    clearAutoState();
+    setRunButtonState({ running: false, text: 'loot to next level' });
+    setStopButtonState({ visible: false });
+  }
+}
 
     // ----------------------------
     // EXP Needed from top bar
@@ -2670,119 +2823,71 @@ if (statusLabel) {
     // ----------------------------
     // Buttons next to #btnLootX (styled like it)
     // ----------------------------
-    function addExpPlanButtons() {
-        if (document.querySelector('#run-exp-plan-btn')) return;
+  function addExpPlanButtons() {
+  if (document.querySelector('#run-exp-plan-btn')) return;
 
-        const lootBtn = document.querySelector('#btnLootX') || document.querySelector('#multiLootButton');
-        if (!lootBtn || !lootBtn.parentNode) return;
+  const lootBtn = document.querySelector('#btnLootX') || document.querySelector('#multiLootButton');
+  if (!lootBtn || !lootBtn.parentNode) return;
 
-        injectExpPlanStylesOnce();
+  injectExpPlanStylesOnce();
 
-        const lootStyle = `
-      background: #333;
-      border: none;
-      border-radius: 8px;
-      padding: 8px 12px;
-      font-size: 13px;
-      line-height: 1.2;
-      color: #fff;
-      cursor: pointer;
-      box-shadow: 0 6px 18px rgba(0, 0, 0, .6);
-      border: 1px solid #2b2d44;
-      white-space: nowrap;
-      vertical-align: middle;
-    `;
+  const lootStyle = `
+    background: #333;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.2;
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .6);
+    border: 1px solid #2b2d44;
+    white-space: nowrap;
+    vertical-align: middle;
+  `;
 
-      const runBtn = document.createElement('button');
-      runBtn.id = 'run-exp-plan-btn';
-      runBtn.type = 'button';
-      runBtn.textContent = 'loot to next level';
-      runBtn.style.cssText = lootStyle + `
-      margin-left: 8px;
-      background: #2f3a56;
-      border-color: #3a3f63;
-    `;
+  const runBtn = document.createElement('button');
+  runBtn.id = 'run-exp-plan-btn';
+  runBtn.type = 'button';
+  runBtn.textContent = 'loot to next level';
+  runBtn.style.cssText = lootStyle + `
+    margin-left: 8px;
+    background: #2f3a56;
+    border-color: #3a3f63;
+  `;
 
-      const clearBtn = document.createElement('button');
-      clearBtn.id = 'clear-exp-plan-btn';
-      clearBtn.type = 'button';
-      clearBtn.textContent = 'Clear';
-      clearBtn.style.cssText = lootStyle + `
-      margin-left: 6px;
-      background: #3b3b3b;
-      display:none;
-    `;
-      const statusLabel = document.createElement('span');
-      statusLabel.id = 'exp-plan-status-label';
-      statusLabel.textContent = '';
-      statusLabel.style.cssText = `
-      margin-left: 8px;
-      font-size: 12px;
-      color: #81c784;
-      font-weight: 600;
-      display: none;
-      vertical-align: middle;
-    `;
-      lootBtn.insertAdjacentElement('afterend', runBtn);
-      //runBtn.insertAdjacentElement('afterend', clearBtn);
-      //runBtn.insertAdjacentElement('afterend', statusLabel);
+  const stopBtn = document.createElement('button');
+  stopBtn.id = 'stop-exp-plan-btn';
+  stopBtn.type = 'button';
+  stopBtn.textContent = 'Stop';
+  stopBtn.style.cssText = lootStyle + `
+    margin-left: 6px;
+    background: #8b2c2c;
+    border-color: #a33737;
+    display: none;
+  `;
 
-      clearBtn.addEventListener('click', clearExpPlanUI);
+  lootBtn.insertAdjacentElement('afterend', runBtn);
+  runBtn.insertAdjacentElement('afterend', stopBtn);
 
-      runBtn.addEventListener('click', async () => {
-          const statusLabel = document.querySelector('#exp-plan-status-label');
-          if (statusLabel) {
-              statusLabel.style.display = 'inline';
-              statusLabel.style.color = '#cfd8dc';
-              statusLabel.textContent = 'Starting...';
-          }
-          // Prevent double clicks
-          if (runBtn.dataset.running === '1') return;
-          runBtn.dataset.running = '1';
-          runBtn.textContent = 'Running...';
+  runBtn.addEventListener('click', async () => {
+    if (runBtn.dataset.running === '1') return; // prevent double clicks
+    // Start (or resume) the auto-level session
+    await startOrContinueAutoLevel();
+  });
 
-          try {
-              // 1) Build exp map/list
-              await updateMonsterExpData();
+  stopBtn.addEventListener('click', () => {
+    clearAutoState();
+    setRunButtonState({ running: false, text: 'loot to next level' });
+    setStopButtonState({ visible: false });
+  });
 
-              // 2) Build plan and show it
-
-              const plan = buildExpPlan({ strategy: 'asIs' });
-              renderExpPlan(plan);
-
-              const zeroExpPlanned = plan.selected.filter(m => !m.finalExpCeil || m.finalExpCeil === 0).length;
-
-              // Optional: if plan doesn't exceed, do not loot
-              // if (!plan.exceeds) return;
-
-              // 3) Loot ONLY planned monsters (direct loot.php + summary)
-              const ids = plan.selected.map(x => x.monsterId);
-              await window.VV_LOOT.lootMonsterIds(ids, {
-                  concurrency: 5,
-                  // optional: stop once we reach needed EXP (keeps the "to next level" promise)
-                  stopAtExp: Number.isFinite(plan.needed) ? Math.ceil(plan.needed) : null,
-                  perLootDelayMs: 90
-              });
-
-// optional reload after a short delay
-//setTimeout(() => window.location.reload(), 800);
-
-          } catch (e) {
-              console.error('[EXP Plan] Run failed', e);
-          } finally {
-              runBtn.dataset.running = '0';
-              runBtn.textContent = 'Loot to next level';
-          }
-      });
-
-      // Expose helpers for console usage
-      window.VV_EXPPLAN.updateMonsterExpData = updateMonsterExpData;
-      window.VV_EXPPLAN.buildExpPlan = buildExpPlan;
-      window.VV_EXPPLAN.renderExpPlan = renderExpPlan;
-      window.VV_EXPPLAN.runPlannedLootOnly = runPlannedLootOnly;
-      window.VV_EXPPLAN.clear = clearExpPlanUI;
+  // If a session was left active before refresh, auto-resume it.
+  if (isAutoActive()) {
+    // Slight delay lets the page settle and cards render
+    setTimeout(() => startOrContinueAutoLevel(), 500);
   }
-
+}
     // Retry-init because page is dynamic
     (function initButtons() {
         let tries = 0;
@@ -5300,8 +5405,8 @@ function escapeHtml(str) {
   };
 
   // Pacing & batch size for Loot All
-  const AUTO_LOOT_DELAY_MS   = 90;
-  const LOOT_ALL_CONCURRENCY = 5;
+  const AUTO_LOOT_DELAY_MS   = 30;
+  const LOOT_ALL_CONCURRENCY = 15;
 
   /* =========================================================
      Utility: Toast (brief notifications)
