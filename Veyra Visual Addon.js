@@ -1052,6 +1052,154 @@ function modBlacksmith() {
       applyFilter('');
   }
 };
+(() => {
+  const DELAY = 300;
+
+  document.querySelectorAll('.forge form').forEach(form => {
+    if (form.querySelector('.forge-times-box')) return;
+
+    const forgeBtn = form.querySelector('.forge-btn');
+    if (forgeBtn) forgeBtn.style.display = 'none';
+
+    const box = document.createElement('input');
+    box.type = 'number';
+    box.min = '1';
+    box.placeholder = 'Times';
+    box.className = 'forge-times-box';
+    box.style.cssText = `
+      width:70px;
+      padding:8px 12px;
+      background:#333;
+      border:1px solid #333;
+      border-radius:8px;
+      color:#fff;
+      font-size:12px;
+      font-family:inherit;
+      box-shadow:0 6px 18px rgba(0,0,0,.6);
+    `;
+
+    const runBtn = document.createElement('button');
+    runBtn.type = 'button';
+    runBtn.textContent = 'Forge x times';
+    runBtn.style.cssText = `
+      flex:1;
+      background:var(--accent);
+      color:#111;
+      border:none;
+      border-radius:10px;
+      padding:10px 12px;
+      font-weight:700;
+      cursor:pointer;
+      transition:filter .2s ease, transform .05s ease-in-out;
+    `;
+
+    runBtn.onmousedown = () => runBtn.style.transform = 'scale(.97)';
+    runBtn.onmouseup = () => runBtn.style.transform = '';
+    runBtn.onmouseleave = () => runBtn.style.transform = '';
+
+    const stopBtn = document.createElement('button');
+    stopBtn.textContent = 'Stop';
+    stopBtn.type = 'button';
+    stopBtn.style.cssText = `
+      margin-left:4px;
+      padding:10px 12px;
+      border-radius:10px;
+      border:none;
+      cursor:pointer;
+      display:none;
+    `;
+
+    form.append(box, runBtn, stopBtn);
+
+    let stop = false;
+
+    runBtn.onclick = async () => {
+      const TIMES = parseInt(box.value);
+      if (!TIMES || TIMES < 1) return alert('Enter a valid number');
+
+      const url = form.action;
+      const formData = new FormData(form);
+
+      stop = false;
+      runBtn.disabled = true;
+      box.disabled = true;
+      stopBtn.style.display = '';
+
+      for (let i = 0; i < TIMES; i++) {
+        if (stop) break;
+
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin'
+          });
+          await res.text();
+        } catch (e) {
+          console.error('Forge failed', e);
+          break;
+        }
+
+        await new Promise(r => setTimeout(r, DELAY));
+      }
+
+      runBtn.disabled = false;
+      box.disabled = false;
+      stopBtn.style.display = 'none';
+
+      // BIG VISIBLE MESSAGE
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position:fixed;
+        inset:0;
+        background:rgba(0,0,0,.75);
+        backdrop-filter:blur(4px);
+        z-index:999999;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        animation:fadeIn .25s ease;
+      `;
+
+      const panel = document.createElement('div');
+      panel.textContent = 'Forge run complete ✔ Refreshing...';
+      panel.style.cssText = `
+        background:linear-gradient(145deg,#1f1f1f,#2c2c2c);
+        color:#fff;
+        font-size:22px;
+        font-weight:700;
+        padding:30px 46px;
+        border-radius:16px;
+        box-shadow:0 0 40px rgba(0,0,0,.8);
+        text-align:center;
+        border:1px solid rgba(255,255,255,.08);
+        animation:pop .25s ease;
+        cursor:pointer;
+      `;
+
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes pop{from{transform:scale(.85)}to{transform:scale(1)}}
+      `;
+      document.head.appendChild(style);
+
+      overlay.appendChild(panel);
+      document.body.appendChild(overlay);
+
+      const refresh = () => location.reload();
+      overlay.onclick = refresh;
+      setTimeout(refresh, 2000);
+    };
+
+    stopBtn.onclick = () => {
+      stop = true;
+      stopBtn.style.display = 'none';
+    };
+  });
+})();
+
+
 
 function modForge() {
     if (window.location.href.includes('legendary_forge.php')) {
