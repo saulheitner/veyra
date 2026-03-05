@@ -6412,3 +6412,268 @@ function escapeHtml(str) {
   });
   bootObserver.observe(document.documentElement || document.body, { childList: true, subtree: true });
 })();
+
+//Collapse button for the dude's auto hunt 
+(function () {
+  'use strict';
+
+  // ===== CONFIG =====
+  const PANEL_ID = 'wave-addon-auto-hunt-controls';
+  const STORAGE_KEY = '__wave_auto_hunt_collapsed';
+
+  // One-shot guard (avoid duplicates across SPA loads or double injection)
+  if (window.__waveAutoHuntCollapseInit) return;
+  window.__waveAutoHuntCollapseInit = true;
+
+  // ===== UTIL: wait for element =====
+  function waitForEl(selector, timeout = 15000) {
+    return new Promise((resolve, reject) => {
+      const el = document.querySelector(selector);
+      if (el) return resolve(el);
+
+      const obs = new MutationObserver(() => {
+        const found = document.querySelector(selector);
+        if (found) {
+          obs.disconnect();
+          resolve(found);
+        }
+      });
+      obs.observe(document.documentElement || document.body, { childList: true, subtree: true });
+
+      setTimeout(() => {
+        obs.disconnect();
+        reject(new Error(`Timeout waiting for ${selector}`));
+      }, timeout);
+    });
+  }
+
+  // ===== STYLE INJECTION =====
+  function injectStyles() {
+    if (document.getElementById('wave-auto-hunt-collapse-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'wave-auto-hunt-collapse-styles';
+    style.textContent = `
+      /* Positioning context for the top-right button */
+      #${PANEL_ID} {
+        position: relative;
+      }
+      /* Top-right button */
+      .wave-ah__collapse-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        border: 1px solid rgba(87, 103, 160, 0.35);
+        background: rgba(17, 20, 35, 0.75);
+        color: rgb(230, 233, 255);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        padding: 0;
+        outline: none;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+        transition: background 0.15s, border-color 0.15s, transform 0.15s;
+        user-select: none;
+      }
+      .wave-ah__collapse-btn:hover {
+        background: rgba(255,255,255,0.06);
+        border-color: rgb(142,160,255);
+      }
+      .wave-ah__collapse-btn:active {
+        transform: translateY(1px);
+      }
+      .wave-ah__collapse-btn svg {
+        width: 14px;
+        height: 14px;
+        opacity: 0.9;
+      }
+      /* Collapsible content container (we add/wrap this dynamically) */
+      .wave-ah__content {
+        overflow: clip; /* modern safe overflow for masked corners */
+        transition: height 180ms ease;
+      }
+      /* Hidden state: height is animated to 0 */
+      #${PANEL_ID}.is-collapsed .wave-ah__content {
+        height: 0 !important;
+      }
+      /* Optional: subtle dim on header row when collapsed */
+      #${PANEL_ID}.is-collapsed .wave-ah__header-row {
+        opacity: 0.92;
+      }
+      /* Make sure the header row keeps its spacing when button overlays */
+      #${PANEL_ID} .wave-ah__header-row {
+        padding-right: 28px; /* space to the right so content doesn't hide behind the button */
+      }
+    `.trim();
+    document.head.appendChild(style);
+  }
+
+  function createChevronIcon(direction = 'up') {
+    // 'up' arrow (collapse); rotate for expand
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('fill', 'currentColor');
+    // Up chevron
+    path.setAttribute('d', 'M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z');
+    svg.appendChild(path);
+    if (direction === 'down') {
+      svg.style.transform = 'rotate(180deg)';
+    }
+    return svg;
+  }
+
+  function enhance(panel) {
+    // Idempotency inside the panel
+    if (panel.querySelector('.wave-ah__collapse-btn')) return;
+
+    // Identify header row (first child row with the toggle and label)
+    // Your HTML: first child is a row with the main checkbox + label + (Ctrl+B)
+    const children = Array.from(panel.children);
+    if (children.length === 0) return;
+
+    const headerRow = children[0];
+    headerRow.classList.add('wave-ah__header-row');
+
+    // Wrap the rest of the rows in a collapsible container
+    const contentWrap = document.createElement('div');
+    contentWrap.className = 'wave-ah__content';
+
+    // Move all children after header into contentWrap
+    for (let i = 1; i < children.length; i++) {
+      contentWrap.appendChild(children[i]); // moves, doesn't clone
+    }
+    panel.appendChild(contentWrap);
+
+    // Create the top-right collapse button
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'wave-ah__collapse-btn';
+    btn.setAttribute('aria-label', 'Collapse Auto Hunt');
+    btn.setAttribute('title', 'Collapse/Expand');
+
+    const icon = createChevronIcon('up'); // Up by default = "collapse"
+    btn.appendChild(icon);
+    panel.appendChild(btn);
+
+    // Measure and set content height for smooth animation
+    function setContentHeightToAuto() {
+      // Temporarily set to auto to measure scrollHeight
+      contentWrap.style.height = 'auto';
+      const h = contentWrap.scrollHeight;
+      contentWrap.style.height = `${h}px`;
+    }
+
+    // Initialize height after first layout
+    requestAnimationFrame(() => {
+      setContentHeightToAuto();
+    });
+
+    // Toggle logic + persistence
+    const isCollapsedStored = localStorage.getItem(STORAGE_KEY) === '1';
+    if (isCollapsedStored) {
+      panel.classList.add('is-collapsed');
+      icon.style.transform = 'rotate(180deg)'; // show "down" when collapsed
+      // Set initial height to 0 for collapsed state
+      contentWrap.style.height = '0px';
+      btn.setAttribute('aria-label', 'Expand Auto Hunt');
+    } else {
+      setContentHeightToAuto();
+    }
+
+    function collapse() {
+      // Animate to 0
+      const current = contentWrap.getBoundingClientRect().height;
+      contentWrap.style.height = `${current}px`; // set fixed start
+      // next frame, transition to 0
+      requestAnimationFrame(() => {
+        contentWrap.style.height = '0px';
+        panel.classList.add('is-collapsed');
+        icon.style.transform = 'rotate(180deg)'; // down
+        btn.setAttribute('aria-label', 'Expand Auto Hunt');
+        localStorage.setItem(STORAGE_KEY, '1');
+      });
+    }
+
+    function expand() {
+      // Measure scrollHeight and animate to that value
+      const target = contentWrap.scrollHeight;
+      contentWrap.style.height = `${target}px`;
+      panel.classList.remove('is-collapsed');
+      icon.style.transform = ''; // up
+      btn.setAttribute('aria-label', 'Collapse Auto Hunt');
+      localStorage.setItem(STORAGE_KEY, '0');
+
+      // After transition, set to 'auto' to handle dynamic content growth
+      const onEnd = () => {
+        if (!panel.classList.contains('is-collapsed')) {
+          contentWrap.style.height = 'auto';
+        }
+        contentWrap.removeEventListener('transitionend', onEnd);
+      };
+      contentWrap.addEventListener('transitionend', onEnd);
+    }
+
+    function toggle() {
+      if (panel.classList.contains('is-collapsed')) {
+        expand();
+      } else {
+        collapse();
+      }
+    }
+
+    // Click + keyboard
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggle();
+    });
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggle();
+      }
+    });
+
+    // If content changes size while expanded, re-fit height
+    const ro = new ResizeObserver(() => {
+      if (!panel.classList.contains('is-collapsed')) {
+        setContentHeightToAuto();
+      }
+    });
+    ro.observe(contentWrap);
+  }
+
+  async function init() {
+    try {
+      await waitForEl(`#${PANEL_ID}`);
+      injectStyles();
+      const panel = document.getElementById(PANEL_ID);
+      if (!panel) return;
+      enhance(panel);
+    } catch (e) {
+      // silent fail
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    init();
+  }
+
+  // Safety net: if the panel is mounted later in a SPA
+  const bootObserver = new MutationObserver(() => {
+    const panel = document.getElementById(PANEL_ID);
+    if (panel && !panel.querySelector('.wave-ah__collapse-btn')) {
+      injectStyles();
+      enhance(panel);
+      // If you know this panel won’t get re-mounted, you can disconnect:
+      // bootObserver.disconnect();
+    }
+  });
+  bootObserver.observe(document.documentElement || document.body, { childList: true, subtree: true });
+})();
