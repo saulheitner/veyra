@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      1.10.3
+// @version      2.1.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -9,6 +9,271 @@
 // @match        https://demonicscans.org/*
 // @license MIT
 // ==/UserScript==
+
+/* ============================
+   Veyra Visual Addon — Feature Flags + Control Panel
+   (paste near top of file, after the userscript header)
+============================ */
+(function () {
+  'use strict';
+
+  const FLAGS_KEY = 'VV:featureFlags:v1';
+
+  // Toggleable features (keys must be stable)
+
+/* --- Add this helper near the top of the panel IIFE --- */
+function detectWaveEnhancedControls() {
+  // 1) DOM anchors often provided by “Wave Enhanced Controls”
+  const hasFilterContainer = !!document.getElementById('wave-addon-monster-filter-container'); // used by your dropdown enhancer
+  const hasAutoHuntPanel  = !!document.getElementById('wave-addon-auto-hunt-controls');       // used by your autohunt collapse enhancer
+
+  // 2) Optional global signals if that script exposes any (keep conservative)
+  const knownGlobals = [
+    'WaveEnhancedControls',  // hypothetical namespace
+    '__waveAddonReady',      // hypothetical ready flag
+  ];
+  const hasGlobal = knownGlobals.some(k => typeof window[k] !== 'undefined');
+
+  return hasFilterContainer || hasAutoHuntPanel || hasGlobal;
+}
+
+/* --- Update your FEATURES array --- */
+const FEATURES = [
+  { key: 'modifySideNav',        label: 'Sidebar overhaul' },
+  { key: 'top_hp_mp',            label: 'Top HP/MP bar' },
+  { key: 'quest_modal',          label: 'Quest window modal' },
+  { key: 'reduce_cards',         label: 'Reduce monster cards size' },
+  { key: 'modMonsterCards',      label: 'Monster card: DMG / EXP/DMG / EXP gained' },
+  { key: 'multiForge',           label: 'forge multiple items at a time' },
+  { key: 'loot_summary',         label: 'Loot Summary module' },
+  { key: 'dungeon_dmg_pills',    label: 'Dungeon mobs — Damage dealt pill' },
+
+  // 🔒 These two are hidden unless Wave Enhanced Controls is detected
+  {
+    key: 'mob_filter_dropdown',
+    label: 'Compress monster filter to dropdown',
+    hiddenUnless: 'waveEnhanced'  // <— custom condition
+  },
+  {
+    key: 'autohunt_collapse',
+    label: 'Collapse AutoHunt',
+    hiddenUnless: 'waveEnhanced'  // <— custom condition
+  },
+];
+
+  // Defaults = ON
+  const DEFAULTS = FEATURES.reduce((acc, f) => (acc[f.key] = true, acc), {});
+
+  function loadFlags() {
+    try {
+      const raw = localStorage.getItem(FLAGS_KEY);
+      const obj = raw ? JSON.parse(raw) : {};
+      // fill any new keys with defaults
+      return { ...DEFAULTS, ...obj };
+    } catch {
+      return { ...DEFAULTS };
+    }
+  }
+  function saveFlags(next) {
+    localStorage.setItem(FLAGS_KEY, JSON.stringify(next));
+  }
+  function isOn(key) {
+    const flags = loadFlags();
+    return !!flags[key];
+  }
+  function setFlag(key, val) {
+    const flags = loadFlags();
+    flags[key] = !!val;
+    saveFlags(flags);
+  }
+  function setAll(val) {
+    const flags = loadFlags();
+    for (const k of Object.keys(flags)) flags[k] = !!val;
+    saveFlags(flags);
+  }
+
+  // Quick helper a module can call at the very top:
+  //   if (!vv.isOn('top_hp_mp')) return;
+  window.vv = window.vv || {};
+  window.vv.isOn = isOn;
+
+  /* ---------- Panel UI ---------- */
+  function injectStylesOnce() {
+    if (document.getElementById('vv-flags-style')) return;
+    const css = `
+      #vv-flags-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);
+        display:none;align-items:center;justify-content:center;z-index:2147483000;}
+      #vv-flags-overlay.show{display:flex;}
+      #vv-flags{background:#1a1b25;border:1px solid #2b2d44;border-radius:12px;
+        width:min(440px,92vw);max-height:85vh;overflow:auto;padding:14px;color:#d5d9f5;
+        box-shadow:0 16px 40px rgba(0,0,0,.5);font:13px/1.4 system-ui,Segoe UI,Roboto,Arial;}
+      #vv-flags h3{margin:0 0 10px 0;font-size:16px}
+      .vv-row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px}
+      .vv-row:hover{background:rgba(255,255,255,0.04)}
+      .vv-spread{display:flex;justify-content:space-between;align-items:center;gap:8px}
+      .vv-btn{padding:8px 12px;border-radius:8px;border:1px solid #3a3f63;background:#2f3a56;color:#fff;cursor:pointer}
+      .vv-btn.secondary{background:#2a2a40;border-color:#444}
+      .vv-btn.danger{background:#8b2c2c;border-color:#a33737}
+      .vv-footer{display:flex;justify-content:space-between;gap:8px;margin-top:10px}
+      .vv-tag{font-size:11px;color:#aab2f5;}
+      .vv-reload{margin-left:auto;font-size:12px;opacity:.9}
+      .vv-switch{inline-size:42px;block-size:22px;background:#3a3f63;border-radius:999px;position:relative;cursor:pointer;border:1px solid #2b2d44}
+      .vv-switch[data-on="1"]{background:#2ecc71}
+      .vv-knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .15s}
+      .vv-switch[data-on="1"] .vv-knob{left:22px}
+
+.vv-open-btn {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 2147483001;
+
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #2b2d44;
+  background: #1a1b25;
+  color: #d5d9f5;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  user-select: none;
+}
+
+    `.trim();
+    const style = document.createElement('style');
+    style.id = 'vv-flags-style';
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  function openPanel() {
+    injectStylesOnce();
+    let overlay = document.getElementById('vv-flags-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'vv-flags-overlay';
+      overlay.innerHTML = `<div id="vv-flags" role="dialog" aria-modal="true" aria-label="Veyra Addon Controls"></div>`;
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) closePanel(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePanel(); });
+    }
+    const box = overlay.querySelector('#vv-flags');
+    box.innerHTML = ''; // rebuild each time from storage
+    const h = document.createElement('h3');
+    h.textContent = '🧩 Veyra Addon Controls';
+    const hint = document.createElement('div');
+    hint.className = 'vv-tag';
+    hint.textContent = 'Toggles are saved instantly. Most changes apply after reload.';
+    const list = document.createElement('div');
+
+    const flags = loadFlags();
+
+const waveDetected = detectWaveEnhancedControls();
+  // Filter features that require Wave Enhanced Controls
+  const visibleFeatures = FEATURES.filter(f => {
+    if (f.hiddenUnless === 'waveEnhanced') return waveDetected;
+    return true;
+  });
+
+  for (const f of visibleFeatures) {
+
+      const row = document.createElement('div');
+      row.className = 'vv-row vv-spread';
+
+      const label = document.createElement('div');
+      label.textContent = f.label;
+
+      const sw = document.createElement('div');
+      sw.className = 'vv-switch';
+      sw.dataset.on = flags[f.key] ? '1' : '0';
+      sw.setAttribute('role', 'switch');
+      sw.setAttribute('aria-checked', flags[f.key] ? 'true' : 'false');
+      sw.title = flags[f.key] ? 'On' : 'Off';
+
+      const knob = document.createElement('div');
+      knob.className = 'vv-knob';
+      sw.appendChild(knob);
+      sw.addEventListener('click', () => {
+        const now = sw.dataset.on === '1';
+        setFlag(f.key, !now);
+        sw.dataset.on = !now ? '1' : '0';
+        sw.setAttribute('aria-checked', !now ? 'true' : 'false');
+        reloadNote.style.display = '';
+      });
+
+      row.append(label, sw);
+      list.appendChild(row);
+    }
+
+    const footer = document.createElement('div');
+    footer.className = 'vv-footer';
+    const leftBtns = document.createElement('div');
+    const btnAllOn = document.createElement('button');
+    btnAllOn.className = 'vv-btn secondary'; btnAllOn.textContent = 'Enable all';
+    btnAllOn.onclick = () => { setAll(true); openPanel(); };
+    const btnAllOff = document.createElement('button');
+    btnAllOff.className = 'vv-btn danger'; btnAllOff.textContent = 'Disable all';
+    btnAllOff.onclick = () => { setAll(false); openPanel(); };
+    leftBtns.append(btnAllOn, btnAllOff);
+
+    const rightBtns = document.createElement('div');
+    const reloadNote = document.createElement('span');
+    reloadNote.className = 'vv-reload'; reloadNote.textContent = 'Reload to apply.';
+    reloadNote.style.display = 'none';
+    const btnReload = document.createElement('button');
+    btnReload.className = 'vv-btn'; btnReload.textContent = 'Reload now';
+    btnReload.onclick = () => location.reload();
+
+    rightBtns.append(reloadNote, btnReload);
+    footer.append(leftBtns, rightBtns);
+
+    box.append(h, hint, list, footer);
+    overlay.classList.add('show');
+  }
+  function closePanel() {
+    document.getElementById('vv-flags-overlay')?.classList.remove('show');
+  }
+
+  // Expose for other code / menu commands
+  window.vv.openControls = openPanel;
+
+  // Launcher button (floating). Also, if your sidebar exists, we’ll add a link there too.
+  function mountOpeners() {
+    injectStylesOnce();
+    // Floating button
+    if (!document.getElementById('vv-open-btn')) {
+      const b = document.createElement('button');
+      b.id = 'vv-open-btn';
+      b.className = 'vv-open-btn';
+      b.type = 'button';
+      b.textContent = '🧩 Addon Controls';
+      b.onclick = openPanel;
+      document.body.appendChild(b);
+    }
+    // Sidebar link (when .side-nav is ready)
+    const trySidebar = () => {
+      const nav = document.querySelector('.side-nav');
+      if (!nav) return;
+      if (document.getElementById('vv-side-controls')) return;
+      const a = document.createElement('a');
+      a.id = 'vv-side-controls';
+      a.href = '#';
+      a.className = 'side-nav-settings';
+      a.textContent = '🧩 Addon Controls';
+      a.onclick = (e) => { e.preventDefault(); openPanel(); };
+      nav.appendChild(a);
+    };
+    trySidebar();
+    const obs = new MutationObserver(trySidebar);
+    obs.observe(document.body, { childList: true, subtree: true });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mountOpeners, { once: true });
+  } else {
+    mountOpeners();
+  }
+})();
+
 
 window.addEventListener('load', () => {
 
@@ -329,6 +594,10 @@ initOrderPanel();
 
 
 function modifySideNav() {
+(function () {
+  if (!vv.isOn('modifySideNav')) return;
+  // existing code...
+})();
     // ------------------------------
     // Prevent re-entrant rebuilds
     // ------------------------------
@@ -1053,97 +1322,249 @@ function modBlacksmith() {
   }
 };
 (() => {
+  if (!vv?.isOn?.('multiForge')) return;
+
   const DELAY = 300;
+  const RUN_LABEL_DEFAULT = 'Forge x times';
 
-  document.querySelectorAll('.forge form').forEach(form => {
-    if (form.querySelector('.forge-times-box')) return;
+  // ---------- Helpers ----------
+  const getCard = (form) => form.closest('.card') || form;
 
+  const selectReqQtyNodes = (form) => {
+    // Requirements live under the card, not inside the form
+    const card = getCard(form);
+    return card.querySelectorAll('.req .qty');
+  };
+
+  const hasAnyBad = (form) => {
+    const card = getCard(form);
+    return !!card.querySelector('.qty.bad');
+  };
+
+  // Bullet-proof max-forge calculator for strings like "30899/100"
+  const computeMaxForges = (form) => {
+    const qtyNodes = selectReqQtyNodes(form);
+    if (!qtyNodes.length) return 0;
+
+    let maxForges = Infinity;
+
+    for (const q of qtyNodes) {
+      // Combine all text under .qty (handles nested spans)
+      let raw = q.textContent.trim();
+      // Keep only digits and slash
+      raw = raw.replace(/[^0-9/]/g, '');
+      const parts = raw.split('/');
+
+      if (parts.length !== 2) return 0;
+
+      const have = parseInt(parts[0], 10);
+      const need = parseInt(parts[1], 10);
+
+      if (!Number.isFinite(have) || !Number.isFinite(need) || need <= 0) {
+        return 0;
+      }
+
+      const possible = Math.floor(have / need);
+      maxForges = Math.min(maxForges, possible);
+    }
+
+    return Number.isFinite(maxForges) && maxForges >= 0 ? maxForges : 0;
+  };
+
+  // Create or reuse the multi-forge UI on a form
+  const ensureUI = (form) => {
+    // Hide original single-forge button if present
     const forgeBtn = form.querySelector('.forge-btn');
     if (forgeBtn) forgeBtn.style.display = 'none';
 
-    const box = document.createElement('input');
-    box.type = 'number';
-    box.min = '1';
-    box.placeholder = 'Times';
-    box.className = 'forge-times-box';
-    box.style.cssText = `
-      width:70px;
-      padding:8px 12px;
-      background:#333;
-      border:1px solid #333;
-      border-radius:8px;
-      color:#fff;
-      font-size:12px;
-      font-family:inherit;
-      box-shadow:0 6px 18px rgba(0,0,0,.6);
-    `;
+    // Reuse existing controls if they exist (from a prior run)
+    let box = form.querySelector('.forge-times-box');
+    let runBtn = Array.from(form.querySelectorAll('button[type="button"]'))
+      .find(b => /forge/i.test(b.textContent || '') && !/stop/i.test(b.textContent || ''));
+    let stopBtn = Array.from(form.querySelectorAll('button[type="button"]'))
+      .find(b => /stop/i.test(b.textContent || ''));
 
-    const runBtn = document.createElement('button');
-    runBtn.type = 'button';
-    // ⬇️ keep a clean default label
-    const RUN_LABEL_DEFAULT = 'Forge x times';
-    runBtn.textContent = RUN_LABEL_DEFAULT;
-    runBtn.style.cssText = `
-      flex:1;
-      background:var(--accent);
-      color:#111;
-      border:none;
-      border-radius:10px;
-      padding:10px 12px;
-      font-weight:700;
-      cursor:pointer;
-      transition:filter .2s ease, transform .05s ease-in-out;
-    `;
+    // Create if missing
+    if (!box) {
+      box = document.createElement('input');
+      box.type = 'number';
+      box.min = '1';
+      box.placeholder = 'Times';
+      box.className = 'forge-times-box';
+      box.style.cssText = `
+        width:70px;
+        padding:8px 12px;
+        background:#333;
+        border:1px solid #333;
+        border-radius:8px;
+        color:#fff;
+        font-size:12px;
+        font-family:inherit;
+        box-shadow:0 6px 18px rgba(0,0,0,.6);
+        margin-right:6px;
+      `;
+      form.appendChild(box);
+    }
 
+    if (!runBtn) {
+      runBtn = document.createElement('button');
+      runBtn.type = 'button';
+      runBtn.textContent = RUN_LABEL_DEFAULT;
+      runBtn.style.cssText = `
+        flex:1;
+        background:var(--accent);
+        color:#111;
+        border:none;
+        border-radius:10px;
+        padding:10px 12px;
+        font-weight:700;
+        cursor:pointer;
+        transition:filter .2s ease, transform .05s ease-in-out;
+      `;
+      form.appendChild(runBtn);
+    }
+
+    if (!stopBtn) {
+      stopBtn = document.createElement('button');
+      stopBtn.type = 'button';
+      stopBtn.textContent = 'Stop';
+      stopBtn.style.cssText = `
+        margin-left:4px;
+        padding:10px 12px;
+        border-radius:10px;
+        border:none;
+        cursor:pointer;
+        display:none;
+      `;
+      form.appendChild(stopBtn);
+    }
+
+    // Button press affordance
     runBtn.onmousedown = () => runBtn.style.transform = 'scale(.97)';
     runBtn.onmouseup = () => runBtn.style.transform = '';
     runBtn.onmouseleave = () => runBtn.style.transform = '';
 
-    const stopBtn = document.createElement('button');
-    stopBtn.textContent = 'Stop';
-    stopBtn.type = 'button';
-    stopBtn.style.cssText = `
-      margin-left:4px;
-      padding:10px 12px;
-      border-radius:10px;
-      border:none;
-      cursor:pointer;
-      display:none;
-    `;
+    // Hidden live region for polite announcements
+    let srLive = form.querySelector('[aria-live="polite"][aria-atomic="true"]');
+    if (!srLive) {
+      srLive = document.createElement('div');
+      srLive.setAttribute('aria-live', 'polite');
+      srLive.setAttribute('aria-atomic', 'true');
+      srLive.style.cssText = 'position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden;';
+      form.appendChild(srLive);
+    }
 
-    form.append(box, runBtn, stopBtn);
+    return { box, runBtn, stopBtn, srLive };
+  };
+
+  // Update ARIA, input max, and enabled/disabled states based on requirements
+  const refreshEligibility = (form, ui) => {
+    const { box, runBtn } = ui;
+
+    if (hasAnyBad(form)) {
+      runBtn.disabled = true;
+      box.disabled = true;
+      box.removeAttribute('max');
+
+      box.setAttribute('aria-label', 'Cannot forge: missing materials');
+      box.setAttribute('title', 'Cannot forge: missing materials');
+
+      runBtn.textContent = 'Missing materials';
+      runBtn.style.filter = 'grayscale(1)';
+      runBtn.style.cursor = 'not-allowed';
+      return { eligible: false, maxForges: 0 };
+    }
+
+    const maxForges = computeMaxForges(form);
+
+    runBtn.disabled = false;
+    box.disabled = false;
+    runBtn.style.filter = '';
+    runBtn.style.cursor = 'pointer';
+    if (!/Forging /.test(runBtn.textContent)) {
+      runBtn.textContent = RUN_LABEL_DEFAULT;
+    }
+
+    box.setAttribute('aria-label', `Maximum possible forges: ${maxForges}`);
+    box.setAttribute('title', `Max: ${maxForges}`);
+    // Constrain the input (at least 1; allow 0 only if you prefer)
+    box.setAttribute('max', String(Math.max(1, maxForges)));
+
+    // Clamp current value if it exceeds max
+    const v = parseInt(box.value || '0', 10);
+    if (Number.isFinite(v) && v > maxForges) {
+      box.value = String(maxForges);
+    }
+
+    return { eligible: maxForges > 0, maxForges };
+  };
+
+  const setCountdownLabel = (btn, remaining) => {
+    btn.textContent = `Forging ${remaining}`;
+  };
+  const resetRunBtnLabel = (btn) => {
+    btn.textContent = RUN_LABEL_DEFAULT;
+  };
+
+  // ---------- Main ----------
+  document.querySelectorAll('.forge form').forEach(form => {
+    const ui = ensureUI(form);
+
+    // Initial eligibility & ARIA update (now reads from the card)
+    let { eligible, maxForges } = refreshEligibility(form, ui);
+
+    // Optional: observe the card for requirement changes (if your page updates counts dynamically)
+    const card = getCard(form);
+    const mo = new MutationObserver(() => {
+      const r = refreshEligibility(form, ui);
+      eligible = r.eligible;
+      maxForges = r.maxForges;
+      ui.srLive.textContent = eligible
+        ? `Maximum possible forges updated to ${maxForges}`
+        : 'Forging is not available due to missing materials';
+    });
+    mo.observe(card, { subtree: true, childList: true, characterData: true });
+
+    // Avoid rebinding if this script runs multiple times
+    if (ui.runBtn.dataset.mfBound === '1') return;
+    ui.runBtn.dataset.mfBound = '1';
 
     let stop = false;
 
-    // Small helper for pluralization (optional)
-    const pluralize = (n, s, p) => (n === 1 ? s : (p || s + 's'));
-
-    // ⬇️ Countdown updater
-    const setCountdownLabel = (remaining) => {
-      // Example: "Forging 9…" (or "Forging 9 left…")
-      //runBtn.textContent = `Forging ${remaining}${remaining > 0 ? '…' : ''}`;
-      runBtn.textContent = `Forging ${remaining}`;
+    ui.stopBtn.onclick = () => {
+      stop = true;
+      ui.stopBtn.style.display = 'none';
     };
 
-    // ⬇️ Reset label to default
-    const resetRunBtnLabel = () => {
-      runBtn.textContent = RUN_LABEL_DEFAULT;
-    };
+    ui.runBtn.onclick = async () => {
+      // Recompute right before running
+      ({ eligible, maxForges } = refreshEligibility(form, ui));
+      if (!eligible || maxForges <= 0) {
+        alert('Missing or invalid materials.');
+        return;
+      }
 
-    runBtn.onclick = async () => {
-      const TIMES = parseInt(box.value);
-      if (!TIMES || TIMES < 1) return alert('Enter a valid number');
+      let TIMES = parseInt(ui.box.value, 10);
+      if (!Number.isFinite(TIMES) || TIMES < 1) {
+        alert('Enter a valid number');
+        return;
+      }
+
+      if (TIMES > maxForges) {
+        TIMES = maxForges;
+        ui.box.value = String(TIMES);
+        ui.srLive.textContent = `Clamped to maximum possible forges: ${TIMES}`;
+      }
 
       const url = form.action;
       const formData = new FormData(form);
 
       stop = false;
-      runBtn.disabled = true;
-      box.disabled = true;
-      stopBtn.style.display = '';
+      ui.runBtn.disabled = true;
+      ui.box.disabled = true;
+      ui.stopBtn.style.display = '';
 
-      // Initial countdown label
-      setCountdownLabel(TIMES);
+      setCountdownLabel(ui.runBtn, TIMES);
 
       for (let i = 0; i < TIMES; i++) {
         if (stop) break;
@@ -1152,35 +1573,36 @@ function modBlacksmith() {
           const res = await fetch(url, {
             method: 'POST',
             body: formData,
-            credentials: 'same-origin'
+            credentials: 'same-origin',
           });
+          // Consume response to completion to avoid hanging streams
           await res.text();
         } catch (e) {
           console.error('Forge failed', e);
           break;
         }
 
-        // Update countdown BEFORE waiting, so UI feels immediate:
         const remaining = TIMES - (i + 1);
-        setCountdownLabel(remaining);
+        setCountdownLabel(ui.runBtn, remaining);
 
         if (remaining > 0) {
           await new Promise(r => setTimeout(r, DELAY));
         }
       }
 
-      runBtn.disabled = false;
-      box.disabled = false;
-      stopBtn.style.display = 'none';
+      ui.runBtn.disabled = false;
+      ui.box.disabled = false;
+      ui.stopBtn.style.display = 'none';
 
-      // If user pressed stop, reflect that briefly before overlay:
       if (stop) {
-        runBtn.textContent = 'Stopped';
+        ui.runBtn.textContent = 'Stopped';
+        ui.srLive.textContent = 'Forge stopped by user';
       } else {
-        resetRunBtnLabel();
+        resetRunBtnLabel(ui.runBtn);
+        ui.srLive.textContent = 'Forge run complete';
       }
 
-      // BIG VISIBLE MESSAGE
+      // BIG VISIBLE MESSAGE + refresh
       const overlay = document.createElement('div');
       overlay.style.cssText = `
         position:fixed;
@@ -1225,11 +1647,6 @@ function modBlacksmith() {
       const refresh = () => location.reload();
       overlay.onclick = refresh;
       setTimeout(refresh, 2000);
-    };
-
-    stopBtn.onclick = () => {
-      stop = true;
-      stopBtn.style.display = 'none';
     };
   });
 })();
@@ -1724,6 +2141,7 @@ function modMonsterCards(){
 
 ////reduce cards size
 (function () {
+    if (!vv.isOn('reduce_cards')) return;
   'use strict';
 
   if (!location.pathname.includes('/active_wave.php')) return;
@@ -1845,6 +2263,7 @@ function isExcludedFromLootPlan(card) {
    - Tracks items/gold/exp/mobs/zeroExp
    ========================================================= */
 (function LOOT_SUMMARY_MODULE() {
+    if (!vv.isOn('loot_summary')) return;
   'use strict';
 if (window.__VV_LOOT_LOADED__) { console.warn("VV_LOOT loaded twice"); return; }
 window.__VV_LOOT_LOADED__ = true;
@@ -2902,8 +3321,13 @@ if (statusLabel) {
 
 // end monster card section
 
-injectQuestModalStyles();
-ensureQuestModal();
+
+if (vv.isOn('quest_modal')) {
+  injectQuestModalStyles();
+  ensureQuestModal();
+}
+
+
 
 // Guild sidebar section
 async function fetchDungeonLink(titleText, dashUrl = 'guild_dash.php') {
@@ -3574,6 +3998,7 @@ async function updateSidebarQuestPanel() {
     content.innerHTML = html;
 
 content.addEventListener('click', (e) => {
+    if (!vv.isOn('quest_modal')) return;
   const card = e.target.closest('.sidebar-quest');
   if (!card) return;
 
@@ -3587,6 +4012,7 @@ content.addEventListener('click', (e) => {
 if (!content.dataset.tmModalBound) {
   content.dataset.tmModalBound = "1";
   content.addEventListener('click', (e) => {
+      if (!vv.isOn('quest_modal')) return;
     const card = e.target.closest('.sidebar-quest');
     if (!card) return;
 
@@ -4066,10 +4492,10 @@ function showNotification(msg, bgColor = '#2ecc71') {
 const observer = new MutationObserver(() => {
     if (document.querySelector('.side-nav')) {
         //initOrderUIRoot();
-        modifySideNav();
+        if (vv.isOn('modifySideNav')) modifySideNav();
         modBlacksmith();
         modForge();
-        modMonsterCards();
+        if (vv.isOn('modMonsterCards')) modMonsterCards();
         fetchAndUpdateSidebarStats();
         observer.disconnect();
     }
@@ -4335,6 +4761,7 @@ function initNavOrderUI({ onSave, onReset }) {
 
 //top hp/mp bar
 (function () {
+    if (!vv.isOn('top_hp_mp')) return;
     /* STYLE INJECTION
   =============================== */
     if (!document.getElementById('topbar-hp-style')) {
@@ -4678,6 +5105,7 @@ function isExceptionPage() {
 
 //// Call once (recommended near script start)
 function injectQuestModalStyles() {
+
   const css = `
   /* ===== Modal overlay ===== */
   #tm-quest-modal-overlay {
@@ -5107,6 +5535,7 @@ function escapeHtml(str) {
 
 //dungeon mobs damage dealt
 (function () {
+    if (!vv.isOn('dungeon_dmg_pills')) return;
   'use strict';
 
   /** ---------- Config ---------- */
@@ -6060,4 +6489,638 @@ function escapeHtml(str) {
         }
     });
 })();
+
+//compress thedude's monster filter to dropdown
+(function () {
+    if (!vv.isOn('mob_filter_dropdown')) return;
+  'use strict';
+
+  // ===== CONFIG =====
+  const CONTAINER_ID = 'wave-addon-monster-filter-container';
+  const LIST_ID = 'wave-addon-mob-filter';
+  const THEME = {
+    bg: 'rgba(17, 20, 35, 0.95)',
+    border: 'rgba(87, 103, 160, 0.35)',
+    text: 'rgb(230, 233, 255)',
+    hover: 'rgba(255, 255, 255, 0.06)',
+    accent: 'rgb(142, 160, 255)',
+    shadow: '0 8px 24px rgba(0,0,0,0.35)'
+  };
+
+  // Global one-shot guard
+  if (window.__mobFilterDropdownInit) return;
+  window.__mobFilterDropdownInit = true;
+
+  // ===== UTIL: wait for an element =====
+  function waitForEl(selector, timeout = 15000) {
+    return new Promise((resolve, reject) => {
+      const el = document.querySelector(selector);
+      if (el) return resolve(el);
+
+      const obs = new MutationObserver(() => {
+        const e = document.querySelector(selector);
+        if (e) {
+          obs.disconnect();
+          resolve(e);
+        }
+      });
+
+      obs.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true
+      });
+
+      setTimeout(() => {
+        obs.disconnect();
+        reject(new Error(`Timeout waiting for ${selector}`));
+      }, timeout);
+    });
+  }
+
+  // ===== STYLE INJECTION =====
+  function injectStyles() {
+    if (document.getElementById('mob-filter-dropdown-styles')) return;
+    const css = `
+      .mob-dd {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-width: 220px;
+      }
+      .mob-dd__btn {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        background: ${THEME.bg};
+        color: ${THEME.text};
+        border: 1px solid ${THEME.border};
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        cursor: pointer;
+        user-select: none;
+        box-shadow: ${THEME.shadow};
+        transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+      }
+      .mob-dd__btn:hover {
+        background: ${THEME.hover};
+        border-color: ${THEME.accent};
+        box-shadow: 0 10px 28px rgba(0,0,0,0.4);
+      }
+      .mob-dd__btn .mob-dd__label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        opacity: 0.95;
+      }
+      .mob-dd__btn .mob-dd__count {
+        font-size: 12px;
+        color: ${THEME.accent};
+        background: rgba(142,160,255,0.12);
+        border: 1px solid rgba(142,160,255,0.25);
+        padding: 2px 6px;
+        border-radius: 999px;
+      }
+      .mob-dd__btn .mob-dd__chev {
+        width: 10px;
+        height: 10px;
+        transform: rotate(0deg);
+        transition: transform 0.15s ease;
+        opacity: 0.85;
+      }
+      .mob-dd__btn[aria-expanded="true"] .mob-dd__chev {
+        transform: rotate(180deg);
+      }
+      .mob-dd__panel {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        z-index: 9999;
+        display: none;
+        background: ${THEME.bg};
+        border: 1px solid ${THEME.border};
+        border-radius: 10px;
+        padding: 8px;
+        width: 100%;
+        max-height: 280px;
+        overflow: auto;
+        box-shadow: ${THEME.shadow};
+      }
+      .mob-dd__panel.is-open {
+        display: block;
+      }
+      .mob-dd__panel label:hover {
+        background: ${THEME.hover} !important;
+      }
+      .mob-dd__tools {
+        position: sticky;
+        top: -8px;
+        background: linear-gradient(180deg, ${THEME.bg} 70%, transparent);
+        padding: 6px 4px 2px;
+        display: flex;
+        gap: 6px;
+        z-index: 1;
+      }
+      .mob-dd__chip {
+        font-size: 11px;
+        color: ${THEME.text};
+        border: 1px solid ${THEME.border};
+        border-radius: 999px;
+        padding: 3px 8px;
+        cursor: pointer;
+        background: rgba(255,255,255,0.04);
+        transition: background 0.15s, border-color 0.15s;
+        user-select: none;
+      }
+      .mob-dd__chip:hover {
+        background: ${THEME.hover};
+        border-color: ${THEME.accent};
+      }
+    `.trim();
+    const style = document.createElement('style');
+    style.id = 'mob-filter-dropdown-styles';
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  function createChevron() {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('class', 'mob-dd__chev');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('fill', THEME.text);
+    p.setAttribute('d', 'M7 10l5 5 5-5z');
+    svg.appendChild(p);
+    return svg;
+  }
+
+  function enhanceAsDropdown(container, list) {
+    // If already enhanced, do nothing (prevents duplicates)
+    if (container.querySelector('.mob-dd')) return;
+
+    // Build wrapper
+    const ddWrap = document.createElement('div');
+    ddWrap.className = 'mob-dd';
+
+    // Button
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mob-dd__btn';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'mob-dd__label';
+    labelSpan.textContent = 'Filter Monsters';
+    labelSpan.style.opacity = '0.8';
+
+    const countSpan = document.createElement('span');
+    countSpan.className = 'mob-dd__count';
+    countSpan.textContent = '0 selected';
+
+    btn.append(labelSpan, countSpan, createChevron());
+
+    // Panel
+    const panel = document.createElement('div');
+    panel.className = 'mob-dd__panel';
+    panel.setAttribute('role', 'listbox');
+    panel.setAttribute('aria-multiselectable', 'true');
+
+    // Tools (optional)
+    const tools = document.createElement('div');
+    tools.className = 'mob-dd__tools';
+    const chipAll = document.createElement('span');
+    chipAll.className = 'mob-dd__chip';
+    chipAll.textContent = 'Select All';
+    const chipNone = document.createElement('span');
+    chipNone.className = 'mob-dd__chip';
+    chipNone.textContent = 'Clear';
+    tools.append(chipAll, chipNone);
+    panel.appendChild(tools);
+
+    // Move the existing checkbox labels into the panel (not cloning!)
+    list.style.display = 'flex';
+    list.style.flexDirection = 'column';
+    list.style.gap = '8px';
+    panel.appendChild(list);
+
+    // Insert
+    container.style.gap = '8px';
+    container.appendChild(ddWrap);
+    ddWrap.appendChild(btn);
+    ddWrap.appendChild(panel);
+
+    // Update count helper
+    function updateCount() {
+      const inputs = panel.querySelectorAll('input[type="checkbox"]');
+      let checked = 0;
+      inputs.forEach(i => { if (i.checked) checked++; });
+      countSpan.textContent = `${checked} selected`;
+    }
+    updateCount();
+
+    // Toggle behavior
+    function openPanel() {
+      panel.classList.add('is-open');
+      btn.setAttribute('aria-expanded', 'true');
+
+if (!detectWaveEnhancedControls()) {
+  // Watch for the two known nodes; when either appears, re-open the panel content.
+  const mo = new MutationObserver(() => {
+    if (detectWaveEnhancedControls()) {
+      mo.disconnect();
+      // Re-render list to include the hidden features
+      openPanel();
+    }
+  });
+  mo.observe(document.documentElement, { childList: true, subtree: true });
+}
+
+    }
+    function closePanel() {
+      panel.classList.remove('is-open');
+      btn.setAttribute('aria-expanded', 'false');
+    }
+    function togglePanel() {
+      const isOpen = panel.classList.contains('is-open');
+      if (isOpen) closePanel(); else openPanel();
+    }
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePanel();
+    });
+
+    // Close on outside click
+    document.addEventListener('click', (e) => {
+      if (!ddWrap.contains(e.target)) {
+        closePanel();
+      }
+    });
+
+    // Keyboard support
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        togglePanel();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        openPanel();
+        const firstInput = panel.querySelector('input[type="checkbox"]');
+        firstInput?.focus();
+      }
+    });
+
+    panel.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closePanel();
+        btn.focus();
+      }
+    });
+
+    // Listen for changes to keep count synced
+    panel.addEventListener('change', (e) => {
+      if (e.target && e.target.matches('input[type="checkbox"]')) {
+        updateCount();
+      }
+    });
+
+    // Select all / clear
+    chipAll.addEventListener('click', () => {
+      panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        if (!cb.checked) {
+          cb.checked = true;
+          cb.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      updateCount();
+    });
+    chipNone.addEventListener('click', () => {
+      panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        if (cb.checked) {
+          cb.checked = false;
+          cb.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      updateCount();
+    });
+
+    // Keep badge in sync if external code toggles .checked
+    const mo = new MutationObserver(updateCount);
+    panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      mo.observe(cb, { attributes: true, attributeFilter: ['checked'] });
+    });
+  }
+
+  let bootObserver; // so we can disconnect after success
+
+  async function init() {
+    try {
+      const container = await waitForEl(`#${CONTAINER_ID}`);
+      const list = await waitForEl(`#${LIST_ID}`);
+
+      // If already enhanced (e.g., by a previous run), stop
+      if (container.querySelector('.mob-dd')) {
+        if (bootObserver) bootObserver.disconnect();
+        return;
+      }
+
+      injectStyles();
+      enhanceAsDropdown(container, list);
+
+      // After successful enhancement, stop the boot observer
+      if (bootObserver) bootObserver.disconnect();
+    } catch (err) {
+      // Silent fail if target not present
+    }
+  }
+
+  // Run when DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    init();
+  }
+
+  // In case the target is mounted dynamically later
+  bootObserver = new MutationObserver(() => {
+    const container = document.getElementById(CONTAINER_ID);
+    const list = document.getElementById(LIST_ID);
+    // Only init if both exist and not yet enhanced
+    if (container && list && !container.querySelector('.mob-dd')) {
+      init();
+    }
+  });
+  bootObserver.observe(document.documentElement || document.body, { childList: true, subtree: true });
+})();
+
+//collpe button for the dude's panels
+(function () {
+    if (!vv.isOn('autohunt_collapse')) return;
+  'use strict';
+
+  // ===== CONFIG =====
+  const PANEL_ID = 'wave-addon-auto-hunt-controls';
+  const STORAGE_KEY = '__wave_auto_hunt_collapsed';
+
+  // One-shot guard (avoid duplicates across SPA loads or double injection)
+  if (window.__waveAutoHuntCollapseInit) return;
+  window.__waveAutoHuntCollapseInit = true;
+
+  // ===== UTIL: wait for element =====
+  function waitForEl(selector, timeout = 15000) {
+    return new Promise((resolve, reject) => {
+      const el = document.querySelector(selector);
+      if (el) return resolve(el);
+
+      const obs = new MutationObserver(() => {
+        const found = document.querySelector(selector);
+        if (found) {
+          obs.disconnect();
+          resolve(found);
+        }
+      });
+      obs.observe(document.documentElement || document.body, { childList: true, subtree: true });
+
+      setTimeout(() => {
+        obs.disconnect();
+        reject(new Error(`Timeout waiting for ${selector}`));
+      }, timeout);
+    });
+  }
+
+  // ===== STYLE INJECTION =====
+  function injectStyles() {
+    if (document.getElementById('wave-auto-hunt-collapse-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'wave-auto-hunt-collapse-styles';
+    style.textContent = `
+      /* Positioning context for the top-right button */
+      #${PANEL_ID} {
+        position: relative;
+      }
+      /* Top-right button */
+      .wave-ah__collapse-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        border: 1px solid rgba(87, 103, 160, 0.35);
+        background: rgba(17, 20, 35, 0.75);
+        color: rgb(230, 233, 255);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        padding: 0;
+        outline: none;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+        transition: background 0.15s, border-color 0.15s, transform 0.15s;
+        user-select: none;
+      }
+      .wave-ah__collapse-btn:hover {
+        background: rgba(255,255,255,0.06);
+        border-color: rgb(142,160,255);
+      }
+      .wave-ah__collapse-btn:active {
+        transform: translateY(1px);
+      }
+      .wave-ah__collapse-btn svg {
+        width: 14px;
+        height: 14px;
+        opacity: 0.9;
+      }
+      /* Collapsible content container (we add/wrap this dynamically) */
+      .wave-ah__content {
+        overflow: clip; /* modern safe overflow for masked corners */
+        transition: height 180ms ease;
+      }
+      /* Hidden state: height is animated to 0 */
+      #${PANEL_ID}.is-collapsed .wave-ah__content {
+        height: 0 !important;
+      }
+      /* Optional: subtle dim on header row when collapsed */
+      #${PANEL_ID}.is-collapsed .wave-ah__header-row {
+        opacity: 0.92;
+      }
+      /* Make sure the header row keeps its spacing when button overlays */
+      #${PANEL_ID} .wave-ah__header-row {
+        padding-right: 28px; /* space to the right so content doesn't hide behind the button */
+      }
+    `.trim();
+    document.head.appendChild(style);
+  }
+
+  function createChevronIcon(direction = 'up') {
+    // 'up' arrow (collapse); rotate for expand
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('fill', 'currentColor');
+    // Up chevron
+    path.setAttribute('d', 'M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z');
+    svg.appendChild(path);
+    if (direction === 'down') {
+      svg.style.transform = 'rotate(180deg)';
+    }
+    return svg;
+  }
+
+  function enhance(panel) {
+    // Idempotency inside the panel
+    if (panel.querySelector('.wave-ah__collapse-btn')) return;
+
+    // Identify header row (first child row with the toggle and label)
+    // Your HTML: first child is a row with the main checkbox + label + (Ctrl+B)
+    const children = Array.from(panel.children);
+    if (children.length === 0) return;
+
+    const headerRow = children[0];
+    headerRow.classList.add('wave-ah__header-row');
+
+    // Wrap the rest of the rows in a collapsible container
+    const contentWrap = document.createElement('div');
+    contentWrap.className = 'wave-ah__content';
+
+    // Move all children after header into contentWrap
+    for (let i = 1; i < children.length; i++) {
+      contentWrap.appendChild(children[i]); // moves, doesn't clone
+    }
+    panel.appendChild(contentWrap);
+
+    // Create the top-right collapse button
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'wave-ah__collapse-btn';
+    btn.setAttribute('aria-label', 'Collapse Auto Hunt');
+    btn.setAttribute('title', 'Collapse/Expand');
+
+    const icon = createChevronIcon('up'); // Up by default = "collapse"
+    btn.appendChild(icon);
+    panel.appendChild(btn);
+
+    // Measure and set content height for smooth animation
+    function setContentHeightToAuto() {
+      // Temporarily set to auto to measure scrollHeight
+      contentWrap.style.height = 'auto';
+      const h = contentWrap.scrollHeight;
+      contentWrap.style.height = `${h}px`;
+    }
+
+    // Initialize height after first layout
+    requestAnimationFrame(() => {
+      setContentHeightToAuto();
+    });
+
+    // Toggle logic + persistence
+    const isCollapsedStored = localStorage.getItem(STORAGE_KEY) === '1';
+    if (isCollapsedStored) {
+      panel.classList.add('is-collapsed');
+      icon.style.transform = 'rotate(180deg)'; // show "down" when collapsed
+      // Set initial height to 0 for collapsed state
+      contentWrap.style.height = '0px';
+      btn.setAttribute('aria-label', 'Expand Auto Hunt');
+    } else {
+      setContentHeightToAuto();
+    }
+
+    function collapse() {
+      // Animate to 0
+      const current = contentWrap.getBoundingClientRect().height;
+      contentWrap.style.height = `${current}px`; // set fixed start
+      // next frame, transition to 0
+      requestAnimationFrame(() => {
+        contentWrap.style.height = '0px';
+        panel.classList.add('is-collapsed');
+        icon.style.transform = 'rotate(180deg)'; // down
+        btn.setAttribute('aria-label', 'Expand Auto Hunt');
+        localStorage.setItem(STORAGE_KEY, '1');
+      });
+    }
+
+    function expand() {
+      // Measure scrollHeight and animate to that value
+      const target = contentWrap.scrollHeight;
+      contentWrap.style.height = `${target}px`;
+      panel.classList.remove('is-collapsed');
+      icon.style.transform = ''; // up
+      btn.setAttribute('aria-label', 'Collapse Auto Hunt');
+      localStorage.setItem(STORAGE_KEY, '0');
+
+      // After transition, set to 'auto' to handle dynamic content growth
+      const onEnd = () => {
+        if (!panel.classList.contains('is-collapsed')) {
+          contentWrap.style.height = 'auto';
+        }
+        contentWrap.removeEventListener('transitionend', onEnd);
+      };
+      contentWrap.addEventListener('transitionend', onEnd);
+    }
+
+    function toggle() {
+      if (panel.classList.contains('is-collapsed')) {
+        expand();
+      } else {
+        collapse();
+      }
+    }
+
+    // Click + keyboard
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggle();
+    });
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggle();
+      }
+    });
+
+    // If content changes size while expanded, re-fit height
+    const ro = new ResizeObserver(() => {
+      if (!panel.classList.contains('is-collapsed')) {
+        setContentHeightToAuto();
+      }
+    });
+    ro.observe(contentWrap);
+  }
+
+  async function init() {
+    try {
+      await waitForEl(`#${PANEL_ID}`);
+      injectStyles();
+      const panel = document.getElementById(PANEL_ID);
+      if (!panel) return;
+      enhance(panel);
+    } catch (e) {
+      // silent fail
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    init();
+  }
+
+  // Safety net: if the panel is mounted later in a SPA
+  const bootObserver = new MutationObserver(() => {
+    const panel = document.getElementById(PANEL_ID);
+    if (panel && !panel.querySelector('.wave-ah__collapse-btn')) {
+      injectStyles();
+      enhance(panel);
+      // If you know this panel won’t get re-mounted, you can disconnect:
+      // bootObserver.disconnect();
+    }
+  });
+  bootObserver.observe(document.documentElement || document.body, { childList: true, subtree: true });
+})();
+
+
 
