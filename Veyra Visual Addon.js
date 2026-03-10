@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.2.1
+// @version      2.2.2
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -6974,6 +6974,7 @@ function escapeHtml(str) {
   bootObserver.observe(document.documentElement || document.body, { childList: true, subtree: true });
 })();
 
+
 //collpe button for the dude's panels
 (function () {
     if (!vv.isOn('autohunt_collapse')) return;
@@ -7459,186 +7460,6 @@ function escapeHtml(str) {
         });
       }
 
-      if (node.parentNode) node.parentNode.replaceChild(wrapper, node);
-
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node;
-      if (shouldSkipElement(el)) return;
-
-      // Copy because childNodes is live
-      const children = Array.from(el.childNodes);
-      for (const child of children) {
-        highlightNode(child, re);
-      }
-    }
-  }
-
-  // ==== Init ================================================================
-
-  async function init() {
-    try {
-      ensureStyles();
-
-      const names = await fetchGuildMemberNames();
-      if (!names.length) {
-        console.warn('Guild highlighter: no names found at', GUILD_URL);
-        return;
-      }
-
-      const re = buildRegexes(names);
-
-      // Initial pass
-      highlightNode(document.body, re);
-
-      // Observe future changes
-      const observer = new MutationObserver(mutations => {
-        for (const mutation of mutations) {
-          if (mutation.type === 'childList') {
-            mutation.addedNodes.forEach(node => {
-              if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) {
-                highlightNode(node, re);
-              }
-            });
-          } else if (mutation.type === 'characterData') {
-            highlightNode(mutation.target, re);
-          }
-        }
-      });
-
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-        attributes: false
-      });
-
-    } catch (err) {
-      console.error('Guild highlighter error:', err);
-    }
-  }
-
-  init();
-})();
-        if (!vv.isOn('membersInRed')) return;
-  'use strict';
-
-  const GUILD_URL = '/guild_members.php';
-
-  // ==== Helpers =============================================================
-
-  // Inject highlight CSS once
-  function ensureStyles() {
-    if (document.getElementById('guild-highlight-style')) return;
-    const style = document.createElement('style');
-    style.id = 'guild-highlight-style';
-    style.textContent = `
-      .guild-highlight {
-        color: red;
-        font-weight: bold;
-      }
-    `;
-    document.head.appendChild(style);
-  }
-
-  // Fetch guild members page and extract the first <a> text inside each <tr> in <tbody>
-  async function fetchGuildMemberNames() {
-    const res = await fetch(GUILD_URL, {
-      credentials: 'same-origin',
-      cache: 'no-store'
-    });
-    if (!res.ok) throw new Error(`Failed to fetch ${GUILD_URL}: ${res.status}`);
-    const html = await res.text();
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-
-    const namesSet = new Set();
-    doc.querySelectorAll('tbody tr').forEach(tr => {
-      const a = tr.querySelector('a');
-      if (a) {
-        // Keep visible text, normalize whitespace
-        const raw = (a.textContent || '');
-        const name = raw.trim().replace(/\s+/g, ' ');
-        if (name) namesSet.add(name);
-      }
-    });
-
-    return Array.from(namesSet);
-  }
-
-  // Normalize string for *testing only* (replacement uses original text)
-  function normalizeForMatch(s) {
-    if (!s) return s;
-    return s
-      .replace(/\u00A0/g, ' ')         // NBSP -> space
-      .replace(/[\u200B-\u200D]/g, ''); // remove zero-width chars
-  }
-
-  // Escape regex meta
-  function escapeRegExp(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
-  // Build a whitespace-tolerant, tag-tolerant pattern for a *single* name
-  // Strategy:
-  //  1) Strip any leading [ ... ] tag to get a canonical username.
-  //  2) Make internal spaces flexible with \s+ (matches normal, NBSP, multiple spaces).
-  //  3) Allow an optional leading [ ... ] tag in the final match.
-  function buildNamePattern(name) {
-    const trimmed = name.trim().replace(/\s+/g, ' ');
-
-    // Remove a leading [ ... ] tag (including variants) from the source name
-    const username = trimmed.replace(/^\s*\[[^\]]+\]\s*/, '').trim();
-
-    // Escape regex syntax in the username
-    const escapedUser = escapeRegExp(username);
-
-    // Make spaces flexible: literal spaces become \s+
-    const userFlexible = escapedUser.replace(/ +/g, '\\s+');
-
-    // Optional leading tag (any [ ... ]) with flexible trailing spaces
-    const optionalTag = '\\[[^\\]]+\\]\\s*';
-
-    // Final pattern: either just username OR [tag] + username, but \s+ inside username is flexible
-    return `(?:${optionalTag})?${userFlexible}`;
-  }
-
-  // Create combined regexes from all names (sorted by length to prioritize longer names)
-  function buildRegexes(names) {
-    if (!names || names.length === 0) return null;
-
-    const patterns = names.map(buildNamePattern);
-    patterns.sort((a, b) => b.length - a.length);
-
-    const pattern = '(' + patterns.join('|') + ')';
-    return {
-      test: new RegExp(pattern, 'iu'),    // Unicode + case-insensitive
-      replace: new RegExp(pattern, 'giu') // global + Unicode + case-insensitive
-    };
-  }
-
-  // Skip elements that shouldn't be processed
-  function shouldSkipElement(el) {
-    if (!(el instanceof Element)) return false;
-    const tag = el.tagName;
-    if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'CODE', 'PRE', 'INPUT'].includes(tag)) return true;
-    if (el.closest('.guild-highlight')) return true; // avoid reprocessing already-highlighted content
-    return false;
-  }
-
-  // Highlight occurrences within a node
-  function highlightNode(node, re) {
-    if (!re) return;
-
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = node.nodeValue;
-      if (!text) return;
-
-      // Use normalized text for a cheap test to avoid unnecessary DOM writes
-      const testText = normalizeForMatch(text);
-      if (!re.test.test(testText)) return;
-
-      // Perform replacement on the *original* text to preserve layout/spacing
-      const wrapper = document.createElement('span');
-      wrapper.innerHTML = text.replace(re.replace, match => `<span class="guild-highlight">${match}</span>`);
       if (node.parentNode) node.parentNode.replaceChild(wrapper, node);
 
     } else if (node.nodeType === Node.ELEMENT_NODE) {
