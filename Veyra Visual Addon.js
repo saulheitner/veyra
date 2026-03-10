@@ -7263,6 +7263,27 @@ function escapeHtml(str) {
     document.head.appendChild(style);
   }
 
+  // Normalize string for *testing only* (replacement uses original text)
+  function normalizeForMatch(s) {
+    if (!s) return s;
+    return s
+      .replace(/\u00A0/g, ' ')          // NBSP -> space
+      .replace(/[\u200B-\u200D]/g, ''); // remove zero-width chars
+  }
+
+  // Sanitize the display name coming from the guild page
+  // - Remove a trailing "(you)" marker (case-insensitive).
+  // - (Optional) remove any trailing "(...)" marker.
+  // - Trim and collapse whitespace.
+  function sanitizeDisplayName(raw) {
+    let s = (raw || '');
+    // Remove trailing (you)
+    s = s.replace(/\s*\(you\)\s*$/i, '');
+    // OPTIONAL: remove any trailing single parenthetical note:
+    // s = s.replace(/\s*\([^)]*\)\s*$/i, '');
+    return s.trim().replace(/\s+/g, ' ');
+  }
+
   // Fetch guild members page and extract the first <a> text inside each <tr> in <tbody>
   async function fetchGuildMemberNames() {
     const res = await fetch(GUILD_URL, {
@@ -7277,21 +7298,12 @@ function escapeHtml(str) {
     doc.querySelectorAll('tbody tr').forEach(tr => {
       const a = tr.querySelector('a');
       if (a) {
-        const raw = (a.textContent || '');
-        const name = raw.trim().replace(/\s+/g, ' ');
+        const name = sanitizeDisplayName(a.textContent);
         if (name) namesSet.add(name);
       }
     });
 
     return Array.from(namesSet);
-  }
-
-  // Normalize string for *testing only* (replacement uses original text)
-  function normalizeForMatch(s) {
-    if (!s) return s;
-    return s
-      .replace(/\u00A0/g, ' ')         // NBSP -> space
-      .replace(/[\u200B-\u200D]/g, ''); // remove zero-width chars
   }
 
   // Escape regex meta
@@ -7302,29 +7314,33 @@ function escapeHtml(str) {
   // Detect if the engine supports lookbehind
   function supportsLookbehind() {
     try {
-      // minimal check
       return /(?<=a)b/u.test('ab');
     } catch (e) {
       return false;
     }
   }
 
-  // Build a whitespace-tolerant, tag-tolerant *username* pattern (no boundaries yet)
-  function buildCoreNamePattern(name) {
-    const trimmed = name.trim().replace(/\s+/g, ' ');
-    // Strip leading [ ... ] tag from source name to get canonical username
-    const username = trimmed.replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+  // Build a whitespace-tolerant, tag-tolerant *username* core (no boundaries yet)
+  // Strategy:
+  //  1) Strip any leading [ ... ] from the sanitized display name to get canonical username.
+  //  2) Make internal spaces flexible with \s+ (matches normal, NBSP, multiple spaces).
+  //  3) Allow an optional leading [ ... ] tag with *zero or more* spaces after it.
+  function buildCoreNamePattern(sanitizedName) {
+    // Remove a leading [ ... ] tag
+    const username = sanitizedName.replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+
+    // Escape and make spaces flexible
     const escapedUser = escapeRegExp(username);
-    // Make spaces flexible inside the username
     const userFlexible = escapedUser.replace(/ +/g, '\\s+');
-    // Allow an optional leading [ ... ] tag with flexible trailing spaces
+
+    // Optional tag (any [ ... ]) with ZERO OR MORE spaces afterwards
     const optionalTag = '\\[[^\\]]+\\]\\s*';
-    // Final name core: optional tag + username
+
+    // Optional tag + username
     return `(?:${optionalTag})?${userFlexible}`;
   }
 
-  // Wrap a pattern with WHOLE-TOKEN boundaries (not inside letters/digits/_)
-  // Using Unicode classes for letters/digits with 'u' flag
+  // Wrap the pattern with WHOLE-TOKEN boundaries (not inside letters/digits/_)
   function applyTokenBoundaries(pattern, useLookbehind) {
     const notWord = '[^\\p{L}\\p{N}_]';
     const left  = useLookbehind ? `(?<=^|${notWord})` : `(^|${notWord})`;
@@ -7333,8 +7349,7 @@ function escapeHtml(str) {
       // (?<=^|nonWord) pattern (?=$|nonWord)
       return `${left}(?:${pattern})${right}`;
     } else {
-      // Fallback: we capture the left boundary to re-insert it during replace
-      // (^|nonWord) (pattern) (?=$|nonWord)
+      // Fallback: capture the left boundary so we can reinsert it in the replacement
       return `${left}(${pattern})${right}`;
     }
   }
@@ -7345,17 +7360,11 @@ function escapeHtml(str) {
 
     const useLB = supportsLookbehind();
 
-    // Build core patterns and then add token boundaries
     const corePatterns = names.map(buildCoreNamePattern);
-    // Sort by length to prefer longer names first (avoid short-name swallowing)
     corePatterns.sort((a, b) => b.length - a.length);
 
     const boundedPatterns = corePatterns.map(p => applyTokenBoundaries(p, useLB));
     const union = '(' + boundedPatterns.join('|') + ')';
-
-    // NOTE: With fallback (no lookbehind), our bounded pattern already includes
-    // a capturing group for the left boundary and for the inner 'pattern'.
-    // To keep it simple, we won't rely on outer grouping for replace—it will be handled in the replacement function.
 
     if (useLB) {
       return {
@@ -7364,10 +7373,6 @@ function escapeHtml(str) {
         replace: new RegExp(union, 'giu')
       };
     } else {
-      // Without lookbehind, we need a slightly different test/replace strategy:
-      // We’ll build a single big RegExp that captures the left boundary and the matched name.
-      // Because our bounded pattern already includes (^|nonWord)(pattern)(?=$|nonWord),
-      // the overall ‘union’ is fine for test, but for replacement we need to re-wrap carefully.
       return {
         mode: 'fallback',
         test: new RegExp(union, 'iu'),
@@ -7385,7 +7390,7 @@ function escapeHtml(str) {
     return false;
   }
 
-  // Replacement helper: wrap matched text with the highlight span.
+  // Replacement helper
   function wrapHighlight(s) {
     return `<span class="guild-highlight">${s}</span>`;
   }
@@ -7404,58 +7409,31 @@ function escapeHtml(str) {
       const wrapper = document.createElement('span');
 
       if (re.mode === 'lookbehind') {
-        // Simple replacement: boundaries are zero-width, so we can safely replace only the match
+        // Boundaries are zero-width: we can replace the match directly
         wrapper.innerHTML = text.replace(re.replace, match => wrapHighlight(match));
       } else {
-        // Fallback mode (no lookbehind):
-        // Our pattern is like:  (^|nonWord) (pattern) (?=$|nonWord)
-        // But since it's a big union, capture group numbers can vary across alternations.
-        // Strategy: use a function and re-run a smaller detection for each replacement.
-        // We'll rebuild a safe boundary-aware mini-regex to find the inner group and reconstruct prefix.
-        const notWord = '[^\\p{L}\\p{N}_]';
-        // A generic finder that matches either start or a non-word char, captures it,
-        // then captures the actual name (which we detect by greedy minimal capture),
-        // and relies on the engine’s global scanning.
-        // Because we can’t know the inner group numbers across union alternations, we use a callback
-        // that inspects arguments and picks the last defined capturing groups.
+        // Fallback (no lookbehind): our union includes a captured left boundary.
+        // We need to ensure we don't wrap that boundary char.
         wrapper.innerHTML = text.replace(re.replace, function () {
           const args = Array.from(arguments);
           const whole = args[0];
-          const offset = args[args.length - 2]; // position
-          const original = args[args.length - 1]; // original string
-
-          // Heuristic to split left boundary vs name: try to find last occurrence where preceding char is start or non-word
-          // A simpler & robust way: rebuild a local regex that mirrors our boundary rule and search at this offset.
-          // However, the global engine already found the exact span; we just need to preserve the left boundary char (if any).
-          // So we’ll do:
-          // - If the match starts at 0, no left boundary.
-          // - Else, check the char before start; if it's non-word, keep it out of the wrapper.
+          const offset = args[args.length - 2];
+          const original = args[args.length - 1];
 
           const start = offset;
-          const end = offset + whole.length;
-
-          // char before start (if any)
-          const prev = start > 0 ? original[start - 1] : '';
-          const prevIsBoundary = start === 0 || !/\p{L}|\p{N}|_/.test(prev);
-
-          // char after end (we don't need it to reconstruct)
-          // const next = end < original.length ? original[end] : '';
-
-          // If prevIsBoundary, we want to avoid wrapping it.
-          // But our 'whole' may already include that boundary char due to how the union was built.
-          // Remove a single leading boundary char from 'whole' if present.
+          // If the preceding char is non-word (or start), drop it from the wrapped core
           let leadingBoundary = '';
           let core = whole;
 
-          if (prevIsBoundary && core.length > 0) {
+          // If match starts at 0 we can't have a leading boundary char inside 'whole';
+          // but if it didn't, the first char of 'whole' might be that boundary.
+          if (start > 0 && core.length > 0) {
             const firstChar = core[0];
             if (!/[\p{L}\p{N}_]/u.test(firstChar)) {
               leadingBoundary = firstChar;
               core = core.slice(1);
             }
           }
-
-          // Now wrap only the core
           return leadingBoundary + wrapHighlight(core);
         });
       }
@@ -7466,7 +7444,6 @@ function escapeHtml(str) {
       const el = node;
       if (shouldSkipElement(el)) return;
 
-      // Copy because childNodes is live
       const children = Array.from(el.childNodes);
       for (const child of children) {
         highlightNode(child, re);
@@ -7520,4 +7497,3 @@ function escapeHtml(str) {
 
   init();
 })();
-
