@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pets Links dock
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.1.1
+// @version      2.1.2
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Pets%20Links%20dock.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Pets%20Links%20dock.js
 // @description  Compact floating pet dock.
