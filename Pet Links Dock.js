@@ -13,6 +13,24 @@
 // ==/UserScript==
 
 (function () {
+    function isExceptionPage() {
+    // Normalize URL for robust matching
+    const href = (window.location && window.location.href || "").toLowerCase();
+    const path = (window.location && window.location.pathname || "").toLowerCase();
+
+    // Match on pathname first (safer), then fallback to href
+    const targets = [
+        "/bookmark.php",
+        "/title/",
+        "/manga/",
+        "/index.php",
+    ];
+
+    // If any target is present in the path or full URL → exception
+    return targets.some(t => path.includes(t) || href.includes(t));
+}
+
+    if (isExceptionPage()) return;
   'use strict';
 
   // -----------------------
