@@ -7275,6 +7275,7 @@ function escapeHtml(str) {
 
 //Guild members in red
 (function () {
+  if (!vv.isOn('membersInRed')) return;
   'use strict';
 
   const GUILD_URL = '/guild_members.php';
