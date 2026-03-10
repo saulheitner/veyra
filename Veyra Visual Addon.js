@@ -6530,7 +6530,7 @@ function escapeHtml(str) {
 
 //compress thedude's monster filter to dropdown
 (function () {
-    if (!vv.isOn('mob_filter_dropdown')) return;
+  if (!vv.isOn('mob_filter_dropdown')) return;
   'use strict';
 
   // ===== CONFIG =====
@@ -6632,6 +6632,7 @@ function escapeHtml(str) {
         transform: rotate(180deg);
       }
       .mob-dd__panel {
+        /* Default in-DOM styling (when not portaled). JS overrides when opened. */
         position: absolute;
         top: calc(100% + 6px);
         left: 0;
@@ -6692,6 +6693,31 @@ function escapeHtml(str) {
     p.setAttribute('d', 'M7 10l5 5 5-5z');
     svg.appendChild(p);
     return svg;
+  }
+
+  // ===== PORTAL HELPERS =====
+  function positionPanelToButton(panel, btn) {
+    const rect = btn.getBoundingClientRect();
+    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+
+    // Desired left based on button
+    let left = rect.left;
+    const panelWidth = rect.width;
+    const padding = 8; // viewport side padding
+
+    // Clamp horizontally into viewport
+    if (left + panelWidth > vw - padding) {
+      left = vw - padding - panelWidth;
+    }
+    if (left < padding) left = padding;
+
+    panel.style.position = 'fixed';
+    panel.style.top = `${rect.bottom + 6}px`; // keep your 6px gap
+    panel.style.left = `${left}px`;
+    panel.style.width = `${panelWidth}px`;
+    panel.style.maxHeight = '280px';
+    panel.style.overflow = 'auto';
+    panel.style.zIndex = '2147483647'; // top-most
   }
 
   function enhanceAsDropdown(container, list) {
@@ -6759,41 +6785,95 @@ function escapeHtml(str) {
     }
     updateCount();
 
-    // Toggle behavior
+    // ===== PORTAL STATE (placeholder + listeners) =====
+    const originalParent = ddWrap; // panel starts as child of ddWrap
+    const placeholder = document.createComment('mob-dd__panel-placeholder');
+
+    function onReposition() {
+      positionPanelToButton(panel, btn);
+    }
+
     function openPanel() {
       panel.classList.add('is-open');
       btn.setAttribute('aria-expanded', 'true');
 
-if (!detectWaveEnhancedControls()) {
-  // Watch for the two known nodes; when either appears, re-open the panel content.
-  const mo = new MutationObserver(() => {
-    if (detectWaveEnhancedControls()) {
-      mo.disconnect();
-      // Re-render list to include the hidden features
-      openPanel();
-    }
-  });
-  mo.observe(document.documentElement, { childList: true, subtree: true });
-}
+      // Move panel to body (portal) if not already there
+      if (panel.parentNode !== document.body) {
+        originalParent.replaceChild(placeholder, panel);
+        document.body.appendChild(panel);
+      }
 
+      // Position by the trigger button
+      positionPanelToButton(panel, btn);
+
+      // Keep aligned on scroll/resize
+      window.addEventListener('scroll', onReposition, { passive: true });
+      window.addEventListener('resize', onReposition);
+
+      // OPTIONAL: If your layout mutates a lot and you need to keep the position synced,
+      // you can enable a lightweight MutationObserver here.
+      // (Commented out by default to avoid overhead.)
+      // if (!openPanel._mo) {
+      //   openPanel._mo = new MutationObserver(onReposition);
+      //   openPanel._mo.observe(document.documentElement, { attributes: true, childList: true, subtree: true });
+      // }
+
+      // Preserve your original "Wave enhanced controls" logic if available
+      if (typeof detectWaveEnhancedControls === 'function' && !detectWaveEnhancedControls()) {
+        const mo = new MutationObserver(() => {
+          if (detectWaveEnhancedControls()) {
+            mo.disconnect();
+            // Re-open to re-render if your flow requires it
+            // (We ensure panel remains open and positioned)
+            onReposition();
+          }
+        });
+        mo.observe(document.documentElement, { childList: true, subtree: true });
+      }
     }
+
     function closePanel() {
       panel.classList.remove('is-open');
       btn.setAttribute('aria-expanded', 'false');
+
+      window.removeEventListener('scroll', onReposition);
+      window.removeEventListener('resize', onReposition);
+
+      if (openPanel._mo) {
+        openPanel._mo.disconnect();
+        openPanel._mo = null;
+      }
+
+      // Move back into original component tree so DOM structure/tab order are restored
+      if (panel.parentNode === document.body) {
+        document.body.removeChild(panel);
+        originalParent.replaceChild(panel, placeholder);
+      }
+
+      // Clear any inline styles set during portaling (optional)
+      panel.style.position = '';
+      panel.style.top = '';
+      panel.style.left = '';
+      panel.style.width = '';
+      panel.style.maxHeight = '';
+      panel.style.overflow = '';
+      panel.style.zIndex = '';
     }
+
     function togglePanel() {
       const isOpen = panel.classList.contains('is-open');
       if (isOpen) closePanel(); else openPanel();
     }
 
+    // Toggle
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       togglePanel();
     });
 
-    // Close on outside click
+    // Close on outside click (works even when panel is portaled)
     document.addEventListener('click', (e) => {
-      if (!ddWrap.contains(e.target)) {
+      if (!ddWrap.contains(e.target) && !panel.contains(e.target)) {
         closePanel();
       }
     });
@@ -7162,6 +7242,283 @@ if (!detectWaveEnhancedControls()) {
 
 //Guild members in red
 (function () {
+  'use strict';
+
+  const GUILD_URL = '/guild_members.php';
+
+  // ==== Helpers =============================================================
+
+  // Inject highlight CSS once
+  function ensureStyles() {
+    if (document.getElementById('guild-highlight-style')) return;
+    const style = document.createElement('style');
+    style.id = 'guild-highlight-style';
+    style.textContent = `
+      .guild-highlight {
+        color: red;
+        font-weight: bold;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // Fetch guild members page and extract the first <a> text inside each <tr> in <tbody>
+  async function fetchGuildMemberNames() {
+    const res = await fetch(GUILD_URL, {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    });
+    if (!res.ok) throw new Error(`Failed to fetch ${GUILD_URL}: ${res.status}`);
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    const namesSet = new Set();
+    doc.querySelectorAll('tbody tr').forEach(tr => {
+      const a = tr.querySelector('a');
+      if (a) {
+        const raw = (a.textContent || '');
+        const name = raw.trim().replace(/\s+/g, ' ');
+        if (name) namesSet.add(name);
+      }
+    });
+
+    return Array.from(namesSet);
+  }
+
+  // Normalize string for *testing only* (replacement uses original text)
+  function normalizeForMatch(s) {
+    if (!s) return s;
+    return s
+      .replace(/\u00A0/g, ' ')         // NBSP -> space
+      .replace(/[\u200B-\u200D]/g, ''); // remove zero-width chars
+  }
+
+  // Escape regex meta
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Detect if the engine supports lookbehind
+  function supportsLookbehind() {
+    try {
+      // minimal check
+      return /(?<=a)b/u.test('ab');
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Build a whitespace-tolerant, tag-tolerant *username* pattern (no boundaries yet)
+  function buildCoreNamePattern(name) {
+    const trimmed = name.trim().replace(/\s+/g, ' ');
+    // Strip leading [ ... ] tag from source name to get canonical username
+    const username = trimmed.replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+    const escapedUser = escapeRegExp(username);
+    // Make spaces flexible inside the username
+    const userFlexible = escapedUser.replace(/ +/g, '\\s+');
+    // Allow an optional leading [ ... ] tag with flexible trailing spaces
+    const optionalTag = '\\[[^\\]]+\\]\\s*';
+    // Final name core: optional tag + username
+    return `(?:${optionalTag})?${userFlexible}`;
+  }
+
+  // Wrap a pattern with WHOLE-TOKEN boundaries (not inside letters/digits/_)
+  // Using Unicode classes for letters/digits with 'u' flag
+  function applyTokenBoundaries(pattern, useLookbehind) {
+    const notWord = '[^\\p{L}\\p{N}_]';
+    const left  = useLookbehind ? `(?<=^|${notWord})` : `(^|${notWord})`;
+    const right = `(?=$|${notWord})`;
+    if (useLookbehind) {
+      // (?<=^|nonWord) pattern (?=$|nonWord)
+      return `${left}(?:${pattern})${right}`;
+    } else {
+      // Fallback: we capture the left boundary to re-insert it during replace
+      // (^|nonWord) (pattern) (?=$|nonWord)
+      return `${left}(${pattern})${right}`;
+    }
+  }
+
+  // Create combined regexes from all names (sorted by length to prioritize longer names)
+  function buildRegexes(names) {
+    if (!names || names.length === 0) return null;
+
+    const useLB = supportsLookbehind();
+
+    // Build core patterns and then add token boundaries
+    const corePatterns = names.map(buildCoreNamePattern);
+    // Sort by length to prefer longer names first (avoid short-name swallowing)
+    corePatterns.sort((a, b) => b.length - a.length);
+
+    const boundedPatterns = corePatterns.map(p => applyTokenBoundaries(p, useLB));
+    const union = '(' + boundedPatterns.join('|') + ')';
+
+    // NOTE: With fallback (no lookbehind), our bounded pattern already includes
+    // a capturing group for the left boundary and for the inner 'pattern'.
+    // To keep it simple, we won't rely on outer grouping for replace—it will be handled in the replacement function.
+
+    if (useLB) {
+      return {
+        mode: 'lookbehind',
+        test: new RegExp(union, 'iu'),
+        replace: new RegExp(union, 'giu')
+      };
+    } else {
+      // Without lookbehind, we need a slightly different test/replace strategy:
+      // We’ll build a single big RegExp that captures the left boundary and the matched name.
+      // Because our bounded pattern already includes (^|nonWord)(pattern)(?=$|nonWord),
+      // the overall ‘union’ is fine for test, but for replacement we need to re-wrap carefully.
+      return {
+        mode: 'fallback',
+        test: new RegExp(union, 'iu'),
+        replace: new RegExp(union, 'giu')
+      };
+    }
+  }
+
+  // Skip elements that shouldn't be processed
+  function shouldSkipElement(el) {
+    if (!(el instanceof Element)) return false;
+    const tag = el.tagName;
+    if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'CODE', 'PRE', 'INPUT'].includes(tag)) return true;
+    if (el.closest('.guild-highlight')) return true; // avoid reprocessing already-highlighted content
+    return false;
+  }
+
+  // Replacement helper: wrap matched text with the highlight span.
+  function wrapHighlight(s) {
+    return `<span class="guild-highlight">${s}</span>`;
+  }
+
+  // Highlight occurrences within a node
+  function highlightNode(node, re) {
+    if (!re) return;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.nodeValue;
+      if (!text) return;
+
+      const testText = normalizeForMatch(text);
+      if (!re.test.test(testText)) return;
+
+      const wrapper = document.createElement('span');
+
+      if (re.mode === 'lookbehind') {
+        // Simple replacement: boundaries are zero-width, so we can safely replace only the match
+        wrapper.innerHTML = text.replace(re.replace, match => wrapHighlight(match));
+      } else {
+        // Fallback mode (no lookbehind):
+        // Our pattern is like:  (^|nonWord) (pattern) (?=$|nonWord)
+        // But since it's a big union, capture group numbers can vary across alternations.
+        // Strategy: use a function and re-run a smaller detection for each replacement.
+        // We'll rebuild a safe boundary-aware mini-regex to find the inner group and reconstruct prefix.
+        const notWord = '[^\\p{L}\\p{N}_]';
+        // A generic finder that matches either start or a non-word char, captures it,
+        // then captures the actual name (which we detect by greedy minimal capture),
+        // and relies on the engine’s global scanning.
+        // Because we can’t know the inner group numbers across union alternations, we use a callback
+        // that inspects arguments and picks the last defined capturing groups.
+        wrapper.innerHTML = text.replace(re.replace, function () {
+          const args = Array.from(arguments);
+          const whole = args[0];
+          const offset = args[args.length - 2]; // position
+          const original = args[args.length - 1]; // original string
+
+          // Heuristic to split left boundary vs name: try to find last occurrence where preceding char is start or non-word
+          // A simpler & robust way: rebuild a local regex that mirrors our boundary rule and search at this offset.
+          // However, the global engine already found the exact span; we just need to preserve the left boundary char (if any).
+          // So we’ll do:
+          // - If the match starts at 0, no left boundary.
+          // - Else, check the char before start; if it's non-word, keep it out of the wrapper.
+
+          const start = offset;
+          const end = offset + whole.length;
+
+          // char before start (if any)
+          const prev = start > 0 ? original[start - 1] : '';
+          const prevIsBoundary = start === 0 || !/\p{L}|\p{N}|_/.test(prev);
+
+          // char after end (we don't need it to reconstruct)
+          // const next = end < original.length ? original[end] : '';
+
+          // If prevIsBoundary, we want to avoid wrapping it.
+          // But our 'whole' may already include that boundary char due to how the union was built.
+          // Remove a single leading boundary char from 'whole' if present.
+          let leadingBoundary = '';
+          let core = whole;
+
+          if (prevIsBoundary && core.length > 0) {
+            const firstChar = core[0];
+            if (!/[\p{L}\p{N}_]/u.test(firstChar)) {
+              leadingBoundary = firstChar;
+              core = core.slice(1);
+            }
+          }
+
+          // Now wrap only the core
+          return leadingBoundary + wrapHighlight(core);
+        });
+      }
+
+      if (node.parentNode) node.parentNode.replaceChild(wrapper, node);
+
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node;
+      if (shouldSkipElement(el)) return;
+
+      // Copy because childNodes is live
+      const children = Array.from(el.childNodes);
+      for (const child of children) {
+        highlightNode(child, re);
+      }
+    }
+  }
+
+  // ==== Init ================================================================
+
+  async function init() {
+    try {
+      ensureStyles();
+
+      const names = await fetchGuildMemberNames();
+      if (!names.length) {
+        console.warn('Guild highlighter: no names found at', GUILD_URL);
+        return;
+      }
+
+      const re = buildRegexes(names);
+
+      // Initial pass
+      highlightNode(document.body, re);
+
+      // Observe future changes
+      const observer = new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+          if (mutation.type === 'childList') {
+            mutation.addedNodes.forEach(node => {
+              if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) {
+                highlightNode(node, re);
+              }
+            });
+          } else if (mutation.type === 'characterData') {
+            highlightNode(mutation.target, re);
+          }
+        }
+      });
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: false
+      });
+
+    } catch (err) {
+      console.error('Guild highlighter error:', err);
+    }
+  }
+
+  init();
+})();
         if (!vv.isOn('membersInRed')) return;
   'use strict';
 
