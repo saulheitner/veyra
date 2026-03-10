@@ -7279,23 +7279,30 @@ function escapeHtml(str) {
 
   const GUILD_URL = '/guild_members.php';
 
-  // ==== Helpers =============================================================
-
-  // Inject highlight CSS once
+  // ==== Styles ==============================================================
   function ensureStyles() {
     if (document.getElementById('guild-highlight-style')) return;
     const style = document.createElement('style');
     style.id = 'guild-highlight-style';
     style.textContent = `
-      .guild-highlight {
+      /* Red tag we prepend when missing */
+      .guild-ahab-tag {
         color: red;
-        font-weight: bold;
+        font-weight: 700;
       }
+      /* Red letters "AHAB" when present in existing text */
+      .guild-ahab {
+        color: red;
+        font-weight: 700;
+      }
+      /* Container to mark processed chunks so we don't double-process */
+      .guild-hl { }
     `;
     document.head.appendChild(style);
   }
 
-  // Normalize string for *testing only* (replacement uses original text)
+  // ==== Utilities ===========================================================
+  // Normalize for quick test only (replacement uses original text)
   function normalizeForMatch(s) {
     if (!s) return s;
     return s
@@ -7303,20 +7310,17 @@ function escapeHtml(str) {
       .replace(/[\u200B-\u200D]/g, ''); // remove zero-width chars
   }
 
-  // Sanitize the display name coming from the guild page
-  // - Remove a trailing "(you)" marker (case-insensitive).
-  // - (Optional) remove any trailing "(...)" marker.
-  // - Trim and collapse whitespace.
+  // Remove noise from display name from the guild list
   function sanitizeDisplayName(raw) {
     let s = (raw || '');
-    // Remove trailing (you)
+    // Remove trailing "(you)"
     s = s.replace(/\s*\(you\)\s*$/i, '');
-    // OPTIONAL: remove any trailing single parenthetical note:
+    // OPTIONAL: remove any trailing parenthetical note
     // s = s.replace(/\s*\([^)]*\)\s*$/i, '');
     return s.trim().replace(/\s+/g, ' ');
   }
 
-  // Fetch guild members page and extract the first <a> text inside each <tr> in <tbody>
+  // Fetch first <a> text inside each <tr> in <tbody> from /guild_members.php
   async function fetchGuildMemberNames() {
     const res = await fetch(GUILD_URL, {
       credentials: 'same-origin',
@@ -7338,96 +7342,85 @@ function escapeHtml(str) {
     return Array.from(namesSet);
   }
 
-  // Escape regex meta
+  // Regex helpers
   function escapeRegExp(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  // Detect if the engine supports lookbehind
   function supportsLookbehind() {
-    try {
-      return /(?<=a)b/u.test('ab');
-    } catch (e) {
-      return false;
-    }
+    try { return /(?<=a)b/u.test('ab'); } catch { return false; }
   }
 
-  // Build a whitespace-tolerant, tag-tolerant *username* core (no boundaries yet)
-  // Strategy:
-  //  1) Strip any leading [ ... ] from the sanitized display name to get canonical username.
-  //  2) Make internal spaces flexible with \s+ (matches normal, NBSP, multiple spaces).
-  //  3) Allow an optional leading [ ... ] tag with *zero or more* spaces after it.
+  // Build a whitespace-flexible username core and allow tag on either side:
+  //   [TAG] username
+  //   username [TAG]
+  //   [TAG]username
+  //   username[TAG]
   function buildCoreNamePattern(sanitizedName) {
-    // Remove a leading [ ... ] tag
-    const username = sanitizedName.replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+    // Strip one leading or trailing [ ... ] tag from the *source* to get canonical username
+    const username = sanitizedName
+      .replace(/^\s*\[[^\]]+\]\s*/, '')  // leading tag
+      .replace(/\s*\[[^\]]+\]\s*$/, '')  // trailing tag
+      .trim();
 
-    // Escape and make spaces flexible
     const escapedUser = escapeRegExp(username);
     const userFlexible = escapedUser.replace(/ +/g, '\\s+');
 
-    // Optional tag (any [ ... ]) with ZERO OR MORE spaces afterwards
-    const optionalTag = '\\[[^\\]]+\\]\\s*';
+    const tagPat = '\\[[^\\]]+\\]'; // any [ ... ]
 
-    // Optional tag + username
-    return `(?:${optionalTag})?${userFlexible}`;
+    // Optional tag before and/or after username; spaces around are optional
+    return `(?:${tagPat}\\s*)?${userFlexible}(?:\\s*${tagPat})?`;
   }
 
-  // Wrap the pattern with WHOLE-TOKEN boundaries (not inside letters/digits/_)
-  function applyTokenBoundaries(pattern, useLookbehind) {
-    const notWord = '[^\\p{L}\\p{N}_]';
-    const left  = useLookbehind ? `(?<=^|${notWord})` : `(^|${notWord})`;
+  // Add token boundaries so we don't match inside other words (Ocean ≠ Oceanic)
+  function applyTokenBoundaries(pattern, useLB) {
+    const notWord = '[^\\p{L}\\p{N}_]'; // letters/digits/_ are "word"
+    const left  = useLB ? `(?<=^|${notWord})` : `(^|${notWord})`;
     const right = `(?=$|${notWord})`;
-    if (useLookbehind) {
-      // (?<=^|nonWord) pattern (?=$|nonWord)
-      return `${left}(?:${pattern})${right}`;
-    } else {
-      // Fallback: capture the left boundary so we can reinsert it in the replacement
-      return `${left}(${pattern})${right}`;
-    }
+    return useLB
+      ? `${left}(?:${pattern})${right}`
+      : `${left}(${pattern})${right}`; // capture left boundary to reinsert in replacement
   }
 
-  // Create combined regexes from all names (sorted by length to prioritize longer names)
   function buildRegexes(names) {
     if (!names || names.length === 0) return null;
 
     const useLB = supportsLookbehind();
+    const cores = names.map(buildCoreNamePattern).sort((a, b) => b.length - a.length);
+    const bounded = cores.map(p => applyTokenBoundaries(p, useLB));
+    const union = '(' + bounded.join('|') + ')';
 
-    const corePatterns = names.map(buildCoreNamePattern);
-    corePatterns.sort((a, b) => b.length - a.length);
-
-    const boundedPatterns = corePatterns.map(p => applyTokenBoundaries(p, useLB));
-    const union = '(' + boundedPatterns.join('|') + ')';
-
-    if (useLB) {
-      return {
-        mode: 'lookbehind',
-        test: new RegExp(union, 'iu'),
-        replace: new RegExp(union, 'giu')
-      };
-    } else {
-      return {
-        mode: 'fallback',
-        test: new RegExp(union, 'iu'),
-        replace: new RegExp(union, 'giu')
-      };
-    }
+    return {
+      mode: useLB ? 'lookbehind' : 'fallback',
+      test: new RegExp(union, 'iu'),
+      replace: new RegExp(union, 'giu')
+    };
   }
 
-  // Skip elements that shouldn't be processed
+  // Skip non-content or already-processed areas
   function shouldSkipElement(el) {
     if (!(el instanceof Element)) return false;
     const tag = el.tagName;
     if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'CODE', 'PRE', 'INPUT'].includes(tag)) return true;
-    if (el.closest('.guild-highlight')) return true; // avoid reprocessing already-highlighted content
+    if (el.closest('.guild-hl')) return true;           // whole block already processed
+    if (el.closest('.guild-ahab, .guild-ahab-tag')) return true; // any inner parts already marked
     return false;
   }
 
-  // Replacement helper
-  function wrapHighlight(s) {
-    return `<span class="guild-highlight">${s}</span>`;
+  // Decorate a matched chunk:
+  // - If it already contains "AHAB" (any case), color just those letters red.
+  // - Else, prepend a red "[AHAB]" plus a space, then the original chunk.
+  function decorateInsert(core) {
+    if (/AHAB/i.test(core)) {
+      return `<span class="guild-hl">${
+        core.replace(/AHAB/gi, m => `<span class="guild-ahab">${m}</span>`)
+      }</span>`;
+    }
+    // No "AHAB" found: prepend red [AHAB]
+    return `<span class="guild-hl"><span class="guild-ahab-tag">[AHAB]</span> ${core}</span>`;
   }
 
-  // Highlight occurrences within a node
+  // Perform highlighting/insertion in a node
   function highlightNode(node, re) {
     if (!re) return;
 
@@ -7441,32 +7434,23 @@ function escapeHtml(str) {
       const wrapper = document.createElement('span');
 
       if (re.mode === 'lookbehind') {
-        // Boundaries are zero-width: we can replace the match directly
-        wrapper.innerHTML = text.replace(re.replace, match => wrapHighlight(match));
+        // Boundaries are zero-width: replace exact match
+        wrapper.innerHTML = text.replace(re.replace, match => decorateInsert(match));
       } else {
-        // Fallback (no lookbehind): our union includes a captured left boundary.
-        // We need to ensure we don't wrap that boundary char.
+        // Fallback (no lookbehind): union includes left boundary inside the overall match.
         wrapper.innerHTML = text.replace(re.replace, function () {
           const args = Array.from(arguments);
           const whole = args[0];
           const offset = args[args.length - 2];
-          const original = args[args.length - 1];
 
-          const start = offset;
-          // If the preceding char is non-word (or start), drop it from the wrapped core
+          // If the match starts with a non-word boundary char, keep it outside our decorated block.
           let leadingBoundary = '';
           let core = whole;
-
-          // If match starts at 0 we can't have a leading boundary char inside 'whole';
-          // but if it didn't, the first char of 'whole' might be that boundary.
-          if (start > 0 && core.length > 0) {
-            const firstChar = core[0];
-            if (!/[\p{L}\p{N}_]/u.test(firstChar)) {
-              leadingBoundary = firstChar;
-              core = core.slice(1);
-            }
+          if (core.length > 0 && !/[\p{L}\p{N}_]/u.test(core[0])) {
+            leadingBoundary = core[0];
+            core = core.slice(1);
           }
-          return leadingBoundary + wrapHighlight(core);
+          return leadingBoundary + decorateInsert(core);
         });
       }
 
@@ -7477,14 +7461,11 @@ function escapeHtml(str) {
       if (shouldSkipElement(el)) return;
 
       const children = Array.from(el.childNodes);
-      for (const child of children) {
-        highlightNode(child, re);
-      }
+      for (const child of children) highlightNode(child, re);
     }
   }
 
   // ==== Init ================================================================
-
   async function init() {
     try {
       ensureStyles();
@@ -7500,7 +7481,7 @@ function escapeHtml(str) {
       // Initial pass
       highlightNode(document.body, re);
 
-      // Observe future changes
+      // Watch future DOM updates
       const observer = new MutationObserver(mutations => {
         for (const mutation of mutations) {
           if (mutation.type === 'childList') {
