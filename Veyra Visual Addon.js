@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.2.2
+// @version      2.2.3
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -1536,7 +1536,7 @@ function modBlacksmith() {
 
     box.setAttribute('aria-label', `Maximum possible forges: ${maxForges}`);
     box.setAttribute('title', `Max: ${maxForges}`);
-    // Constrain the input (at least 1; allow 0 only if you prefer)
+    // Constrain the input (at least 1)
     box.setAttribute('max', String(Math.max(1, maxForges)));
 
     // Clamp current value if it exceeds max
@@ -1559,20 +1559,47 @@ function modBlacksmith() {
   document.querySelectorAll('.forge form').forEach(form => {
     const ui = ensureUI(form);
 
-    // Initial eligibility & ARIA update (now reads from the card)
+    // Initial eligibility & ARIA update
     let { eligible, maxForges } = refreshEligibility(form, ui);
 
-    // Optional: observe the card for requirement changes (if your page updates counts dynamically)
     const card = getCard(form);
-    const mo = new MutationObserver(() => {
-      const r = refreshEligibility(form, ui);
-      eligible = r.eligible;
-      maxForges = r.maxForges;
-      ui.srLive.textContent = eligible
-        ? `Maximum possible forges updated to ${maxForges}`
-        : 'Forging is not available due to missing materials';
-    });
-    mo.observe(card, { subtree: true, childList: true, characterData: true });
+
+    // FIX: Observe ONLY the requirements container, not the entire card, to avoid feedback loop
+    const reqRoot = card.querySelector('.req') || card;
+
+    // Avoid rebinding observers if script runs multiple times
+    if (!reqRoot.dataset.mfObserved) {
+      reqRoot.dataset.mfObserved = '1';
+
+      // FIX: Debounce + pause observer during UI updates
+      let updateScheduled = false;
+      const mo = new MutationObserver(() => {
+        if (updateScheduled) return;
+        updateScheduled = true;
+        requestAnimationFrame(() => {
+          updateScheduled = false;
+
+          // Temporarily stop observing while we mutate the DOM (prevents feedback)
+          mo.disconnect(); // FIX: pause
+          try {
+            const r = refreshEligibility(form, ui);
+            const changed = (r.eligible !== eligible) || (r.maxForges !== maxForges);
+            eligible = r.eligible;
+            maxForges = r.maxForges;
+            if (changed) {
+              ui.srLive.textContent = eligible
+                ? `Maximum possible forges updated to ${maxForges}`
+                : 'Forging is not available due to missing materials';
+            }
+          } finally {
+            // Reattach to reqRoot only
+            mo.observe(reqRoot, { subtree: true, childList: true, characterData: true });
+          }
+        });
+      });
+
+      mo.observe(reqRoot, { subtree: true, childList: true, characterData: true });
+    }
 
     // Avoid rebinding if this script runs multiple times
     if (ui.runBtn.dataset.mfBound === '1') return;
@@ -1606,7 +1633,6 @@ function modBlacksmith() {
       }
 
       const url = form.action;
-      const formData = new FormData(form);
 
       stop = false;
       ui.runBtn.disabled = true;
@@ -1619,6 +1645,8 @@ function modBlacksmith() {
         if (stop) break;
 
         try {
+          // FIX (optional): rebuild FormData each iteration in case the form changes after POST
+          const formData = new FormData(form); // moved inside loop
           const res = await fetch(url, {
             method: 'POST',
             body: formData,
@@ -1652,6 +1680,18 @@ function modBlacksmith() {
       }
 
       // BIG VISIBLE MESSAGE + refresh
+      // FIX: add ID so we don't inject duplicate styles on repeat runs
+      let style = document.getElementById('mf-keyframes');
+      if (!style) {
+        style = document.createElement('style');
+        style.id = 'mf-keyframes';
+        style.textContent = `
+          @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+          @keyframes pop{from{transform:scale(.85)}to{transform:scale(1)}}
+        `;
+        document.head.appendChild(style);
+      }
+
       const overlay = document.createElement('div');
       overlay.style.cssText = `
         position:fixed;
@@ -1683,13 +1723,6 @@ function modBlacksmith() {
         cursor:pointer;
       `;
 
-      const style = document.createElement('style');
-      style.textContent = `
-        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
-        @keyframes pop{from{transform:scale(.85)}to{transform:scale(1)}}
-      `;
-      document.head.appendChild(style);
-
       overlay.appendChild(panel);
       document.body.appendChild(overlay);
 
@@ -1699,7 +1732,6 @@ function modBlacksmith() {
     };
   });
 })();
-
 
 function modForge() {
     if (window.location.href.includes('legendary_forge.php')) {
