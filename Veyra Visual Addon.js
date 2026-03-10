@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.1.1
+// @version      2.1.2
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -15,6 +15,24 @@
    (paste near top of file, after the userscript header)
 ============================ */
 (function () {
+	  function isExceptionPage() {
+    // Normalize URL for robust matching
+    const href = (window.location && window.location.href || "").toLowerCase();
+    const path = (window.location && window.location.pathname || "").toLowerCase();
+
+    // Match on pathname first (safer), then fallback to href
+    const targets = [
+        "/bookmark.php",
+        "/title/",
+        "/manga/",
+        "/index.php",
+    ];
+
+    // If any target is present in the path or full URL → exception
+    return targets.some(t => path.includes(t) || href.includes(t));
+}
+
+    if (isExceptionPage()) return;
   'use strict';
 
   const FLAGS_KEY = 'VV:featureFlags:v1';
