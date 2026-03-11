@@ -7289,6 +7289,7 @@ function escapeHtml(str) {
         "/inventory.php",
         "/blacksmith.php",
         "/stats.php",
+		"/achievements.php",
 
     ];
 
