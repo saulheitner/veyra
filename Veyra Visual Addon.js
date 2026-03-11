@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.2.3
+// @version      2.2.4
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -7275,6 +7275,29 @@ function escapeHtml(str) {
 
 //Guild members in red
 (function () {
+	    function isExceptionPage() {
+    // Normalize URL for robust matching
+    const href = (window.location && window.location.href || "").toLowerCase();
+    const path = (window.location && window.location.pathname || "").toLowerCase();
+
+    // Match on pathname first (safer), then fallback to href
+    const targets = [
+        "/bookmark.php",
+        "/title/",
+        "/manga/",
+        "/index.php",
+        "/inventory.php",
+        "/blacksmith.php",
+        "/stats.php",
+
+    ];
+
+    // If any target is present in the path or full URL → exception
+    return targets.some(t => path.includes(t) || href.includes(t));
+}
+
+
+ if (isExceptionPage()) return;
   if (!vv.isOn('membersInRed')) return;
   'use strict';
 
