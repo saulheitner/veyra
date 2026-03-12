@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.2.5
+// @version      2.3.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -86,7 +86,7 @@ const FEATURES = [
   { key: 'multiForge',           label: 'forge multiple items at a time' },
   { key: 'loot_summary',         label: 'Loot Summary module' },
   { key: 'dungeon_dmg_pills',    label: 'Dungeon mobs — Damage dealt pill' },
-  //{ key: 'membersInRed',         label: 'Highlight guild members in red' },
+ // { key: 'membersInRed',         label: 'Highlight guild members in red' },
 
   // 🔒 These two are hidden unless Wave Enhanced Controls is detected
   {
@@ -165,25 +165,24 @@ const FEATURES = [
 /* Default: hidden everywhere */
 .vv-open-btn {
   position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 2147483001;
-
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid #2b2d44;
-  background: #1a1b25;
+  bottom: 17px;
+  right: 230px;
+  z-index: 10001;
+  width: 45px;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid #2f324d;
+  background: #24263a;
   color: #d5d9f5;
   cursor: pointer;
   box-shadow: 0 8px 24px rgba(0,0,0,.35);
   user-select: none;
-
   display: none; /* hide by default */
 }
 
 /* Desktop/Laptop only: fine pointer + hover, and a bit of width */
 @media (hover: hover) and (pointer: fine) and (min-width: 992px) {
-  .vv-open-btn { display: inline-flex; align-items: center; }
+  .vv-open-btn { display: inline-flex; align-items: center; justify-content: center;}
 }
 
     `.trim();
@@ -293,7 +292,7 @@ const waveDetected = detectWaveEnhancedControls();
       b.id = 'vv-open-btn';
       b.className = 'vv-open-btn';
       b.type = 'button';
-      b.textContent = '🧩 Addon Controls';
+      b.textContent = '🧩';
       b.onclick = openPanel;
       document.body.appendChild(b);
     }
@@ -3700,9 +3699,34 @@ function initAdventurersGuildQuests() {
                 questsHTML += '</div>';
             }
 
-        if (availableQuests.length === 0 && activeQuests.length === 0) {
-            questsHTML = '<div style="text-align: center; padding: 15px; color: #6c7086; font-size: 11px; font-style: italic;">No quests found</div>';
-        }
+      if (availableQuests.length === 0 && activeQuests.length === 0) {
+    const cooldowns = JSON.parse(localStorage.getItem("quest_cooldowns") || "{}");
+    const now = Date.now();
+    let cdHTML = `<div style="text-align:center; padding: 10px; font-weight:bold; color:#cdd6f4; font-size:12px;">Quest Cooldowns</div>`;
+
+    const entries = Object.entries(cooldowns);
+
+    if (entries.length === 0) {
+        cdHTML += `<div style="text-align:center; padding: 15px; color:#6c7086; font-size:11px; font-style:italic;">No cooldowns found</div>`;
+    } else {
+        entries.forEach(([id, q]) => {
+            const remaining = q.availableAt - now;
+            const status = remaining <= 0 ? "READY" : formatTime(remaining);
+
+            cdHTML += `
+            <div style="margin-bottom:8px; padding:6px; background:rgba(30,30,46,0.45); border-radius:4px; border-left:2px solid ${
+                remaining <= 0 ? "#a6e3a1" : "#fab387"
+            };">
+                <div style="font-weight:bold; font-size:10px; color:#cdd6f4;">${q.name}</div>
+                <div style="font-size:9px; color:${
+                    remaining <= 0 ? "lightgreen" : "orange"
+                };">${status}</div>
+            </div>`;
+        });
+    }
+
+    questsHTML = cdHTML;
+}
 
         questsContainer.innerHTML = questsHTML;
 questsContainer.addEventListener('click', (e) => {
@@ -3927,6 +3951,23 @@ function sidebarQuestAction(actionType, questId, btn) {
         .then(r => r.json())
         .then(data => {
         if (data && data.status === 'ok') {
+
+    // 🔥 Log cooldown when sidebar finishes the quest
+    if (actionType === "finish") {
+        const title = btn.closest(".sidebar-quest")
+             ?.querySelector(".quest-title")
+             ?.innerText.trim();
+
+        const store = loadCooldowns();
+        store[questId] = {
+            name: title || ("Quest " + questId),
+            completedAt: Date.now(),
+            availableAt: Date.now() + COOLDOWN_MS
+        };
+        saveCooldowns(store);
+        console.log("Cooldown logged from SIDEBAR:", questId, title);
+    }
+
             showNotification(data.message || `Quest ${actionType === 'giveUp' ? 'abandoned' : 'finished'}!`, 'success');
             // Refresh the sidebar quests content
             initAdventurersGuildQuests();
@@ -7275,7 +7316,7 @@ function escapeHtml(str) {
 
 //Guild members in red
 (function () {
-	    function isExceptionPage() {
+    function isExceptionPage() {
     // Normalize URL for robust matching
     const href = (window.location && window.location.href || "").toLowerCase();
     const path = (window.location && window.location.pathname || "").toLowerCase();
@@ -7289,7 +7330,8 @@ function escapeHtml(str) {
         "/inventory.php",
         "/blacksmith.php",
         "/stats.php",
-		"/achievements.php",
+        "/achievements.php",
+
 
     ];
 
@@ -7535,3 +7577,187 @@ function escapeHtml(str) {
 
   init();
 })();
+
+
+//quests cooldown
+    const STORAGE_KEY = "quest_cooldowns";
+    const COOLDOWN_MS = 72 * 60 * 60 * 1000; // 72 hours
+
+    function loadCooldowns() {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    }
+
+    function saveCooldowns(data) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+
+    function formatTime(ms) {
+        if (ms <= 0) return "READY";
+
+        let totalSeconds = Math.floor(ms / 1000);
+        let hours = Math.floor(totalSeconds / 3600);
+        let minutes = Math.floor((totalSeconds % 3600) / 60);
+
+        return `${hours}h ${minutes}m`;
+    }
+
+    // Detect "Finish quest" button clicked
+    function hookFinishButtons() {
+        document.querySelectorAll(".quest-finish-btn").forEach(btn => {
+            if (btn.dataset.cooldownHooked) return;
+            btn.dataset.cooldownHooked = "1";
+btn.addEventListener("click", () => {
+
+    // Try main-page style onclick parser
+    let onClick = btn.getAttribute("onclick");
+    let match = onClick ? onClick.match(/finishQuest\((\d+)/) : null;
+
+    let questID = null;
+
+    if (match) {
+        questID = match[1]; // main page finish
+    } else {
+        // Use sidebar’s data attribute
+        questID = btn.dataset.questId;
+    }
+
+    if (!questID) return;
+
+    let title = btn.closest(".quest-row, .sidebar-quest")
+                   ?.querySelector(".quest-main-title, .quest-title")
+                   ?.innerText.trim();
+
+    let data = loadCooldowns();
+    data[questID] = {
+        name: title,
+        completedAt: Date.now(),
+        availableAt: Date.now() + COOLDOWN_MS
+    };
+    saveCooldowns(data);
+
+    console.log("Quest logged (sidebar or main):", questID, title);
+});
+
+
+        });
+    }
+
+    // Display cooldown section
+    function renderCooldownList() {
+    let data = loadCooldowns();
+    let now = Date.now();
+
+    // Locate the parent section (the one you showed)
+    let questSection = document.querySelector("section.section.quests-section");
+    if (!questSection) return;
+
+    // Create or update the cooldown container
+    let box = document.getElementById("questCooldownBox");
+    if (!box) {
+        box = document.createElement("div");
+        box.id = "questCooldownBox";
+
+        // Styling
+        box.style.marginTop = "20px";
+        box.style.padding = "12px";
+        box.style.border = "1px solid rgba(31, 41, 55, 0.9)";
+        box.style.background = "rgba(0,0,0,0.35)";
+        box.style.color = "white";
+        box.style.fontSize = "14px";
+        box.style.borderRadius = "8px";
+
+        // Insert as the LAST element inside the section
+        questSection.appendChild(box);
+    }
+
+    // Build display
+    let html = `<div style="font-size:16px; margin-bottom:8px;"><strong>Quest Cooldowns</strong>
+        <button id="qtExportBtn" class="adv-shop-buy-btn" style="margin-right:6px;">Export</button>
+    <button id="qtImportBtn" class="adv-shop-buy-btn" >Import</button>
+    </div>`;
+
+    let hasAny = false;
+    for (let id in data) {
+        hasAny = true;
+        let q = data[id];
+        let remaining = q.availableAt - now;
+        let status = remaining <= 0 ? "READY" : formatTime(remaining);
+
+        html += `
+            <div style="margin-bottom:6px;">
+                <strong>${q.name}</strong><br>
+                <span style="color:${remaining <= 0 ? "lightgreen" : "orange"};">
+                    ${status}
+                </span>
+            </div>
+        `;
+    }
+
+    if (!hasAny) {
+        html += `<i>No completed timed quests yet.</i>`;
+    }
+
+    box.innerHTML = html;
+       setTimeout(() => {
+    const exportBtn = document.getElementById("qtExportBtn");
+    const importBtn = document.getElementById("qtImportBtn");
+
+    if (exportBtn) exportBtn.onclick = exportCooldowns;
+    if (importBtn) importBtn.onclick = importCooldowns;
+}, 100);
+}
+
+    // Auto-update timers every minute
+    setInterval(renderCooldownList, 60 * 1000);
+
+    // Initial load
+    setInterval(hookFinishButtons, 500);
+    renderCooldownList();
+
+    function exportCooldowns() {
+    const data = loadCooldowns();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "quest_cooldowns.json";
+    a.click();
+
+    URL.revokeObjectURL(url);
+}
+
+    function importCooldowns() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json";
+
+    input.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const imported = JSON.parse(reader.result);
+
+                // Merge with existing data
+                const existing = loadCooldowns();
+                const merged = { ...existing, ...imported };
+
+                saveCooldowns(merged);
+                alert("Cooldowns successfully imported!");
+
+                renderCooldownList(); // refresh UI
+            } catch (err) {
+                alert("Invalid file format.");
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    input.click();
+}
+
+
+
