@@ -7299,7 +7299,7 @@ function escapeHtml(str) {
 
 
  if (isExceptionPage()) return;
-  if (!vv.isOn('membersInRed')) return;
+  //if (!vv.isOn('membersInRed')) return;
   'use strict';
 
   const GUILD_URL = '/guild_members.php';
