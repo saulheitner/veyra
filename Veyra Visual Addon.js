@@ -7681,7 +7681,8 @@ btn.addEventListener("click", () => {
         hasAny = true;
         let q = data[id];
         let remaining = q.availableAt - now;
-        let status = remaining <= 0 ? "READY" : formatTime(remaining);
+        if (remaining <= 0) continue;
+        let status = formatTime(remaining);
 
         html += `
             <div style="margin-bottom:6px;">
