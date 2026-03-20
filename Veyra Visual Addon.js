@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.3.1
+// @version      2.4.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -33,114 +33,117 @@ function isExceptionPage() {
    Veyra Visual Addon — Feature Flags + Control Panel
    (paste near top of file, after the userscript header)
 ============================ */
-(function () {
+(function() {
 
-function isExceptionPage() {
-    // Normalize URL for robust matching
-    const href = (window.location && window.location.href || "").toLowerCase();
-    const path = (window.location && window.location.pathname || "").toLowerCase();
+    function isExceptionPage() {
+        // Normalize URL for robust matching
+        const href = (window.location && window.location.href || "").toLowerCase();
+        const path = (window.location && window.location.pathname || "").toLowerCase();
 
-    // Match on pathname first (safer), then fallback to href
-    const targets = [
-        "/bookmark.php",
-        "/title/",
-        "/manga/",
-        "/index.php",
+        // Match on pathname first (safer), then fallback to href
+        const targets = [
+            "/bookmark.php",
+            "/title/",
+            "/manga/",
+            "/index.php",
+        ];
+
+        // If any target is present in the path or full URL → exception
+        return targets.some(t => path.includes(t) || href.includes(t));
+    }
+
+
+    if (isExceptionPage()) return;
+    'use strict';
+
+    const FLAGS_KEY = 'VV:featureFlags:v1';
+
+    // Toggleable features (keys must be stable)
+
+    /* --- Add this helper near the top of the panel IIFE --- */
+    function detectWaveEnhancedControls() {
+        // 1) DOM anchors often provided by “Wave Enhanced Controls”
+        const hasFilterContainer = !!document.getElementById('wave-addon-monster-filter-container'); // used by your dropdown enhancer
+        const hasAutoHuntPanel = !!document.getElementById('wave-addon-auto-hunt-controls'); // used by your autohunt collapse enhancer
+
+        // 2) Optional global signals if that script exposes any (keep conservative)
+        const knownGlobals = [
+            'WaveEnhancedControls', // hypothetical namespace
+            '__waveAddonReady', // hypothetical ready flag
+        ];
+        const hasGlobal = knownGlobals.some(k => typeof window[k] !== 'undefined');
+
+        return hasFilterContainer || hasAutoHuntPanel || hasGlobal;
+    }
+
+    /* --- Update your FEATURES array --- */
+    const FEATURES = [{
+            key: 'modifySideNav',
+            label: 'Sidebar overhaul'
+        },
+        {key: 'top_hp_mp',        label: 'Top HP/MP bar'},
+        {key: 'quest_modal',      label: 'Quest window modal'},
+        {key: 'reduce_cards',     label: 'Reduce monster cards size'},
+        {key: 'modMonsterCards',  label: 'Monster card: DMG / EXP/DMG / EXP gained'},
+        {key: 'multiForge',       label: 'forge multiple items at a time'},
+        {key: 'loot_summary',     label: 'Loot Summary module'},
+        {key: 'dungeon_dmg_pills',label: 'Dungeon mobs — Damage dealt pill'},
+        // { key: 'membersInRed',         label: 'Highlight guild members in red' },
+
+        // 🔒 These two are hidden unless Wave Enhanced Controls is detected
+        {key: 'mob_filter_dropdown',label: 'Compress monster filter to dropdown',hiddenUnless: 'waveEnhanced'},
+        {key: 'autohunt_collapse',  label: 'Collapse AutoHunt',hiddenUnless: 'waveEnhanced'},
     ];
 
-    // If any target is present in the path or full URL → exception
-    return targets.some(t => path.includes(t) || href.includes(t));
-}
+    // Defaults = ON
+    const DEFAULTS = FEATURES.reduce((acc, f) => (acc[f.key] = true, acc), {});
 
-
- if (isExceptionPage()) return;
-  'use strict';
-
-  const FLAGS_KEY = 'VV:featureFlags:v1';
-
-  // Toggleable features (keys must be stable)
-
-/* --- Add this helper near the top of the panel IIFE --- */
-function detectWaveEnhancedControls() {
-  // 1) DOM anchors often provided by “Wave Enhanced Controls”
-  const hasFilterContainer = !!document.getElementById('wave-addon-monster-filter-container'); // used by your dropdown enhancer
-  const hasAutoHuntPanel  = !!document.getElementById('wave-addon-auto-hunt-controls');       // used by your autohunt collapse enhancer
-
-  // 2) Optional global signals if that script exposes any (keep conservative)
-  const knownGlobals = [
-    'WaveEnhancedControls',  // hypothetical namespace
-    '__waveAddonReady',      // hypothetical ready flag
-  ];
-  const hasGlobal = knownGlobals.some(k => typeof window[k] !== 'undefined');
-
-  return hasFilterContainer || hasAutoHuntPanel || hasGlobal;
-}
-
-/* --- Update your FEATURES array --- */
-const FEATURES = [
-  { key: 'modifySideNav',        label: 'Sidebar overhaul' },
-  { key: 'top_hp_mp',            label: 'Top HP/MP bar' },
-  { key: 'quest_modal',          label: 'Quest window modal' },
-  { key: 'reduce_cards',         label: 'Reduce monster cards size' },
-  { key: 'modMonsterCards',      label: 'Monster card: DMG / EXP/DMG / EXP gained' },
-  { key: 'multiForge',           label: 'forge multiple items at a time' },
-  { key: 'loot_summary',         label: 'Loot Summary module' },
-  { key: 'dungeon_dmg_pills',    label: 'Dungeon mobs — Damage dealt pill' },
- // { key: 'membersInRed',         label: 'Highlight guild members in red' },
-
-  // 🔒 These two are hidden unless Wave Enhanced Controls is detected
-  {
-    key: 'mob_filter_dropdown',
-    label: 'Compress monster filter to dropdown',
-    hiddenUnless: 'waveEnhanced'  // <— custom condition
-  },
-  {
-    key: 'autohunt_collapse',
-    label: 'Collapse AutoHunt',
-    hiddenUnless: 'waveEnhanced'  // <— custom condition
-  },
-];
-
-  // Defaults = ON
-  const DEFAULTS = FEATURES.reduce((acc, f) => (acc[f.key] = true, acc), {});
-
-  function loadFlags() {
-    try {
-      const raw = localStorage.getItem(FLAGS_KEY);
-      const obj = raw ? JSON.parse(raw) : {};
-      // fill any new keys with defaults
-      return { ...DEFAULTS, ...obj };
-    } catch {
-      return { ...DEFAULTS };
+    function loadFlags() {
+        try {
+            const raw = localStorage.getItem(FLAGS_KEY);
+            const obj = raw ? JSON.parse(raw) : {};
+            // fill any new keys with defaults
+            return {
+                ...DEFAULTS,
+                ...obj
+            };
+        } catch {
+            return {
+                ...DEFAULTS
+            };
+        }
     }
-  }
-  function saveFlags(next) {
-    localStorage.setItem(FLAGS_KEY, JSON.stringify(next));
-  }
-  function isOn(key) {
-    const flags = loadFlags();
-    return !!flags[key];
-  }
-  function setFlag(key, val) {
-    const flags = loadFlags();
-    flags[key] = !!val;
-    saveFlags(flags);
-  }
-  function setAll(val) {
-    const flags = loadFlags();
-    for (const k of Object.keys(flags)) flags[k] = !!val;
-    saveFlags(flags);
-  }
 
-  // Quick helper a module can call at the very top:
-  //   if (!vv.isOn('top_hp_mp')) return;
-  window.vv = window.vv || {};
-  window.vv.isOn = isOn;
+    function saveFlags(next) {
+        localStorage.setItem(FLAGS_KEY, JSON.stringify(next));
+    }
 
-  /* ---------- Panel UI ---------- */
-  function injectStylesOnce() {
-    if (document.getElementById('vv-flags-style')) return;
-    const css = `
+    function isOn(key) {
+        const flags = loadFlags();
+        return !!flags[key];
+    }
+
+    function setFlag(key, val) {
+        const flags = loadFlags();
+        flags[key] = !!val;
+        saveFlags(flags);
+    }
+
+    function setAll(val) {
+        const flags = loadFlags();
+        for (const k of Object.keys(flags)) flags[k] = !!val;
+        saveFlags(flags);
+    }
+
+    // Quick helper a module can call at the very top:
+    //   if (!vv.isOn('top_hp_mp')) return;
+    window.vv = window.vv || {};
+    window.vv.isOn = isOn;
+
+    /* ---------- Panel UI ---------- */
+    function injectStylesOnce() {
+        if (document.getElementById('vv-flags-style')) return;
+        const css = `
       #vv-flags-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);
         display:none;align-items:center;justify-content:center;z-index:2147483000;}
       #vv-flags-overlay.show{display:flex;}
@@ -186,139 +189,162 @@ const FEATURES = [
 }
 
     `.trim();
-    const style = document.createElement('style');
-    style.id = 'vv-flags-style';
-    style.textContent = css;
-    document.head.appendChild(style);
-  }
-
-  function openPanel() {
-    injectStylesOnce();
-    let overlay = document.getElementById('vv-flags-overlay');
-    if (!overlay) {
-      overlay = document.createElement('div');
-      overlay.id = 'vv-flags-overlay';
-      overlay.innerHTML = `<div id="vv-flags" role="dialog" aria-modal="true" aria-label="Veyra Addon Controls"></div>`;
-      document.body.appendChild(overlay);
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) closePanel(); });
-      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePanel(); });
-    }
-    const box = overlay.querySelector('#vv-flags');
-    box.innerHTML = ''; // rebuild each time from storage
-    const h = document.createElement('h3');
-    h.textContent = '🧩 Veyra Addon Controls';
-    const hint = document.createElement('div');
-    hint.className = 'vv-tag';
-    hint.textContent = 'Toggles are saved instantly. Most changes apply after reload.';
-    const list = document.createElement('div');
-
-    const flags = loadFlags();
-
-const waveDetected = detectWaveEnhancedControls();
-  // Filter features that require Wave Enhanced Controls
-  const visibleFeatures = FEATURES.filter(f => {
-    if (f.hiddenUnless === 'waveEnhanced') return waveDetected;
-    return true;
-  });
-
-  for (const f of visibleFeatures) {
-
-      const row = document.createElement('div');
-      row.className = 'vv-row vv-spread';
-
-      const label = document.createElement('div');
-      label.textContent = f.label;
-
-      const sw = document.createElement('div');
-      sw.className = 'vv-switch';
-      sw.dataset.on = flags[f.key] ? '1' : '0';
-      sw.setAttribute('role', 'switch');
-      sw.setAttribute('aria-checked', flags[f.key] ? 'true' : 'false');
-      sw.title = flags[f.key] ? 'On' : 'Off';
-
-      const knob = document.createElement('div');
-      knob.className = 'vv-knob';
-      sw.appendChild(knob);
-      sw.addEventListener('click', () => {
-        const now = sw.dataset.on === '1';
-        setFlag(f.key, !now);
-        sw.dataset.on = !now ? '1' : '0';
-        sw.setAttribute('aria-checked', !now ? 'true' : 'false');
-        reloadNote.style.display = '';
-      });
-
-      row.append(label, sw);
-      list.appendChild(row);
+        const style = document.createElement('style');
+        style.id = 'vv-flags-style';
+        style.textContent = css;
+        document.head.appendChild(style);
     }
 
-    const footer = document.createElement('div');
-    footer.className = 'vv-footer';
-    const leftBtns = document.createElement('div');
-    const btnAllOn = document.createElement('button');
-    btnAllOn.className = 'vv-btn secondary'; btnAllOn.textContent = 'Enable all';
-    btnAllOn.onclick = () => { setAll(true); openPanel(); };
-    const btnAllOff = document.createElement('button');
-    btnAllOff.className = 'vv-btn danger'; btnAllOff.textContent = 'Disable all';
-    btnAllOff.onclick = () => { setAll(false); openPanel(); };
-    leftBtns.append(btnAllOn, btnAllOff);
+    function openPanel() {
+        injectStylesOnce();
+        let overlay = document.getElementById('vv-flags-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'vv-flags-overlay';
+            overlay.innerHTML = `<div id="vv-flags" role="dialog" aria-modal="true" aria-label="Veyra Addon Controls"></div>`;
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) closePanel();
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') closePanel();
+            });
+        }
+        const box = overlay.querySelector('#vv-flags');
+        box.innerHTML = ''; // rebuild each time from storage
+        const h = document.createElement('h3');
+        h.textContent = '🧩 Veyra Addon Controls';
+        const hint = document.createElement('div');
+        hint.className = 'vv-tag';
+        hint.textContent = 'Toggles are saved instantly. Most changes apply after reload.';
+        const list = document.createElement('div');
 
-    const rightBtns = document.createElement('div');
-    const reloadNote = document.createElement('span');
-    reloadNote.className = 'vv-reload'; reloadNote.textContent = 'Reload to apply.';
-    reloadNote.style.display = 'none';
-    const btnReload = document.createElement('button');
-    btnReload.className = 'vv-btn'; btnReload.textContent = 'Reload now';
-    btnReload.onclick = () => location.reload();
+        const flags = loadFlags();
 
-    rightBtns.append(reloadNote, btnReload);
-    footer.append(leftBtns, rightBtns);
+        const waveDetected = detectWaveEnhancedControls();
+        // Filter features that require Wave Enhanced Controls
+        const visibleFeatures = FEATURES.filter(f => {
+            if (f.hiddenUnless === 'waveEnhanced') return waveDetected;
+            return true;
+        });
 
-    box.append(h, hint, list, footer);
-    overlay.classList.add('show');
-  }
-  function closePanel() {
-    document.getElementById('vv-flags-overlay')?.classList.remove('show');
-  }
+        for (const f of visibleFeatures) {
 
-  // Expose for other code / menu commands
-  window.vv.openControls = openPanel;
+            const row = document.createElement('div');
+            row.className = 'vv-row vv-spread';
 
-  // Launcher button (floating). Also, if your sidebar exists, we’ll add a link there too.
-  function mountOpeners() {
-    injectStylesOnce();
-    // Floating button
-    if (!document.getElementById('vv-open-btn')) {
-      const b = document.createElement('button');
-      b.id = 'vv-open-btn';
-      b.className = 'vv-open-btn';
-      b.type = 'button';
-      b.textContent = '🧩';
-      b.onclick = openPanel;
-      document.body.appendChild(b);
+            const label = document.createElement('div');
+            label.textContent = f.label;
+
+            const sw = document.createElement('div');
+            sw.className = 'vv-switch';
+            sw.dataset.on = flags[f.key] ? '1' : '0';
+            sw.setAttribute('role', 'switch');
+            sw.setAttribute('aria-checked', flags[f.key] ? 'true' : 'false');
+            sw.title = flags[f.key] ? 'On' : 'Off';
+
+            const knob = document.createElement('div');
+            knob.className = 'vv-knob';
+            sw.appendChild(knob);
+            sw.addEventListener('click', () => {
+                const now = sw.dataset.on === '1';
+                setFlag(f.key, !now);
+                sw.dataset.on = !now ? '1' : '0';
+                sw.setAttribute('aria-checked', !now ? 'true' : 'false');
+                reloadNote.style.display = '';
+            });
+
+            row.append(label, sw);
+            list.appendChild(row);
+        }
+
+        const footer = document.createElement('div');
+        footer.className = 'vv-footer';
+        const leftBtns = document.createElement('div');
+        const btnAllOn = document.createElement('button');
+        btnAllOn.className = 'vv-btn secondary';
+        btnAllOn.textContent = 'Enable all';
+        btnAllOn.onclick = () => {
+            setAll(true);
+            openPanel();
+        };
+        const btnAllOff = document.createElement('button');
+        btnAllOff.className = 'vv-btn danger';
+        btnAllOff.textContent = 'Disable all';
+        btnAllOff.onclick = () => {
+            setAll(false);
+            openPanel();
+        };
+        leftBtns.append(btnAllOn, btnAllOff);
+
+        const rightBtns = document.createElement('div');
+        const reloadNote = document.createElement('span');
+        reloadNote.className = 'vv-reload';
+        reloadNote.textContent = 'Reload to apply.';
+        reloadNote.style.display = 'none';
+        const btnReload = document.createElement('button');
+        btnReload.className = 'vv-btn';
+        btnReload.textContent = 'Reload now';
+        btnReload.onclick = () => location.reload();
+
+        rightBtns.append(reloadNote, btnReload);
+        footer.append(leftBtns, rightBtns);
+
+        box.append(h, hint, list, footer);
+        overlay.classList.add('show');
     }
-    // Sidebar link (when .side-nav is ready)
-    const trySidebar = () => {
-      const nav = document.querySelector('.side-nav');
-      if (!nav) return;
-      if (document.getElementById('vv-side-controls')) return;
-      const a = document.createElement('a');
-      a.id = 'vv-side-controls';
-      a.href = '#';
-      a.className = 'side-nav-settings';
-      a.textContent = '🧩 Addon Controls';
-      a.onclick = (e) => { e.preventDefault(); openPanel(); };
-      nav.appendChild(a);
-    };
-    trySidebar();
-    const obs = new MutationObserver(trySidebar);
-    obs.observe(document.body, { childList: true, subtree: true });
-  }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mountOpeners, { once: true });
-  } else {
-    mountOpeners();
-  }
+    function closePanel() {
+        document.getElementById('vv-flags-overlay')?.classList.remove('show');
+    }
+
+    // Expose for other code / menu commands
+    window.vv.openControls = openPanel;
+
+    // Launcher button (floating). Also, if your sidebar exists, we’ll add a link there too.
+    function mountOpeners() {
+        injectStylesOnce();
+        // Floating button
+        if (!document.getElementById('vv-open-btn')) {
+            const b = document.createElement('button');
+            b.id = 'vv-open-btn';
+            b.className = 'vv-open-btn';
+            b.type = 'button';
+            b.textContent = '🧩';
+            b.onclick = openPanel;
+            document.body.appendChild(b);
+        }
+        // Sidebar link (when .side-nav is ready)
+        const trySidebar = () => {
+            const nav = document.querySelector('.side-nav');
+            if (!nav) return;
+            if (document.getElementById('vv-side-controls')) return;
+            const a = document.createElement('a');
+            a.id = 'vv-side-controls';
+            a.href = '#';
+            a.className = 'side-nav-settings';
+            a.textContent = '🧩 Addon Controls';
+            a.onclick = (e) => {
+                e.preventDefault();
+                openPanel();
+            };
+            nav.appendChild(a);
+        };
+        trySidebar();
+        const obs = new MutationObserver(trySidebar);
+        obs.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', mountOpeners, {
+            once: true
+        });
+    } else {
+        mountOpeners();
+    }
 })();
 
 
@@ -605,10 +631,10 @@ window.addEventListener('load', () => {
     document.head.appendChild(style);
 });
 
-function initOrderPanel(){
+function initOrderPanel() {
     const navOrder = document.createElement('div');
-    navOrder.id="nav-order-panel"
-    navOrder.innerHTML= `
+    navOrder.id = "nav-order-panel"
+    navOrder.innerHTML = `
  <div class="panel" role="dialog" aria-label="Customize Navigation Order">
     <div class="panel-header">
       <div class="header-left">
@@ -641,10 +667,10 @@ initOrderPanel();
 
 
 function modifySideNav() {
-(function () {
-  if (!vv.isOn('modifySideNav')) return;
-  // existing code...
-})();
+    (function() {
+        if (!vv.isOn('modifySideNav')) return;
+        // existing code...
+    })();
     // ------------------------------
     // Prevent re-entrant rebuilds
     // ------------------------------
@@ -710,26 +736,29 @@ function modifySideNav() {
         // ------------------------------
         // 2) Read prefs from localStorage (unchanged)
         // ------------------------------
-        const { order, disabled } = loadPrefs();
+        const {
+            order,
+            disabled
+        } = loadPrefs();
         const orderIndex = new Map(order.map((h, i) => [h, i]));
         const disabledSet = new Set(disabled);
 
         // Collect existing nav anchors (exclude the settings launcher)
         const items = Array.from(nav.querySelectorAll('.side-nav-item'))
-        .filter(a => a.id !== 'nav-order-btn');
+            .filter(a => a.id !== 'nav-order-btn');
 
         // ------------------------------
         // 3) Reorder & filter hidden (unchanged)
         // ------------------------------
         const sortedAnchors = [...items]
-        .sort((a, b) => {
-            const ah = a.getAttribute('href');
-            const bh = b.getAttribute('href');
-            const ai = orderIndex.has(ah) ? orderIndex.get(ah) : Number.POSITIVE_INFINITY;
-            const bi = orderIndex.has(bh) ? orderIndex.get(bh) : Number.POSITIVE_INFINITY;
-            return ai - bi;
-        })
-        .filter(a => !disabledSet.has(a.getAttribute('href')));
+            .sort((a, b) => {
+                const ah = a.getAttribute('href');
+                const bh = b.getAttribute('href');
+                const ai = orderIndex.has(ah) ? orderIndex.get(ah) : Number.POSITIVE_INFINITY;
+                const bi = orderIndex.has(bh) ? orderIndex.get(bh) : Number.POSITIVE_INFINITY;
+                return ai - bi;
+            })
+            .filter(a => !disabledSet.has(a.getAttribute('href')));
 
         const frag = document.createDocumentFragment();
         sortedAnchors.forEach(n => frag.appendChild(n));
@@ -752,25 +781,34 @@ function modifySideNav() {
         }
 
         /**
-     * Place `el` relative to the anchor (or its wrapper if already wrapped).
-     * where: 'before' | 'after' | 'prepend' | 'append'
-     * Skips placement if the anchor is hidden or missing.
-     */
+         * Place `el` relative to the anchor (or its wrapper if already wrapped).
+         * where: 'before' | 'after' | 'prepend' | 'append'
+         * Skips placement if the anchor is hidden or missing.
+         */
         function placeRelativeTo(href, el, where = 'after') {
             if (hiddenSet.has(href)) return null;
             const anchor = nav.querySelector(`.side-nav-item[href="${href}"]`);
             if (!anchor) return null;
 
-            const target = anchor.parentElement?.classList?.contains('side-nav-flex')
-            ? anchor.parentElement
-            : anchor;
+            const target = anchor.parentElement?.classList?.contains('side-nav-flex') ?
+                anchor.parentElement :
+                anchor;
 
             switch (where) {
-                case 'before': target.before(el); break;
-                case 'after': target.after(el); break;
-                case 'prepend': target.prepend(el); break;
-                case 'append': target.append(el); break;
-                default: target.after(el);
+                case 'before':
+                    target.before(el);
+                    break;
+                case 'after':
+                    target.after(el);
+                    break;
+                case 'prepend':
+                    target.prepend(el);
+                    break;
+                case 'append':
+                    target.append(el);
+                    break;
+                default:
+                    target.after(el);
             }
             return el;
         }
@@ -821,8 +859,8 @@ function modifySideNav() {
       </div>
     `;
 
-      // GUILD — two groups: Guild Dungeon + Guild War
-      const guildSectionHTML = `
+        // GUILD — two groups: Guild Dungeon + Guild War
+        const guildSectionHTML = `
       <div class="submenu-group" style="margin-left: 10px; margin-top: 10px;">
         <div class="submenu-title" style="font-weight:600; color:#e6e6e6; margin-bottom:4px;">Guild War</div>
         <div class="submenu-items">
@@ -840,8 +878,8 @@ function modifySideNav() {
       </div>
     `;
 
-      // PVP — Colosseum
-      const pvpSectionHTML =`
+        // PVP — Colosseum
+        const pvpSectionHTML = `
       <div style="margin-left: 15px; padding: 6px; background: rgba(30, 30, 46, 0.5); border-radius: 4px; border-left: 2px solid #9f5ae5;">
         <a style="text-decoration: none; color:white;" href="/colosseum.php">
 		  <span class="side-icon">🏟️</span>
@@ -850,8 +888,8 @@ function modifySideNav() {
       </div>
     `;
 
-      // MERCHANT — Black merchant
-      const merchantSectionHTML =`
+        // MERCHANT — Black merchant
+        const merchantSectionHTML = `
       <div style="margin-left: 15px; padding: 6px; background: rgba(30, 30, 46, 0.5); border-radius: 4px; border-left: 2px solid #0f0f0f;">
         <a style="text-decoration: none; color:white;" href="black_merchant.php">
 		  <span class="side-icon">⛃</span>
@@ -860,8 +898,8 @@ function modifySideNav() {
       </div>
     `;
 
-      // STATS — keep your existing pills/buttons
-      const statsSectionHTML = `
+        // STATS — keep your existing pills/buttons
+        const statsSectionHTML = `
       <div class="stat-upgrade-row" data-stat="attack">
         <div class="stat-info">
           <span>⚔️ Atk:</span>
@@ -896,8 +934,8 @@ function modifySideNav() {
       </div>
     `;
 
-      // BLACKSMITH → Artisans Guild section (3 links)
-      const artisansSectionHTML = `
+        // BLACKSMITH → Artisans Guild section (3 links)
+        const artisansSectionHTML = `
       <div style="margin-left: 15px; padding: 6px; background: rgba(30, 30, 46, 0.5); border-radius: 4px; border-left: 2px solid #e59f5a;">
         <a style="text-decoration: none; color:white;" href="/blacksmith.php">
           <span class="side-icon">⚒️</span>
@@ -919,326 +957,384 @@ function modifySideNav() {
     `;
 
 
-      // ------------------------------
-      // 6) Wrap anchors FIRST so sections are adjacent to wrappers
-      // ------------------------------
-      const sharedStyle = {
-          width: '156px',
-          borderRadius: '10px 0 0 10px',
-      };
+        // ------------------------------
+        // 6) Wrap anchors FIRST so sections are adjacent to wrappers
+        // ------------------------------
+        const sharedStyle = {
+            width: '156px',
+            borderRadius: '10px 0 0 10px',
+        };
 
-      function wrapWithExpandButton(anchor) {
-          if (!anchor) return;
-          Object.assign(anchor.style, sharedStyle);
-          if (anchor.parentElement?.classList?.contains('side-nav-flex')) return;
+        function wrapWithExpandButton(anchor) {
+            if (!anchor) return;
+            Object.assign(anchor.style, sharedStyle);
+            if (anchor.parentElement?.classList?.contains('side-nav-flex')) return;
 
-          const wrapper = document.createElement('div');
-          wrapper.className = 'side-nav-flex';
-          anchor.replaceWith(wrapper);
-          wrapper.appendChild(anchor);
-          wrapper.appendChild(createExpandBtn());
+            const wrapper = document.createElement('div');
+            wrapper.className = 'side-nav-flex';
+            anchor.replaceWith(wrapper);
+            wrapper.appendChild(anchor);
+            wrapper.appendChild(createExpandBtn());
 
-          Object.assign(wrapper.style, {
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-          });
-      }
+            Object.assign(wrapper.style, {
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+            });
+        }
 
-      [
-          '/guild_dash.php',
-          '/game_dash.php',
-          '/stats.php',
-          '/battle_pass.php',
-          '/adventurers_guild.php',
-          '/pvp.php',
-          '/merchant.php',
-          '/blacksmith.php', // keep real href for order/disable, but we will block navigation
-      ]
-          .filter(href => !hiddenSet.has(href))
-          .forEach(href => {
-          wrapWithExpandButton(nav.querySelector(`.side-nav-item[href="${href}"]`));
-      });
+        [
+            '/guild_dash.php',
+            '/game_dash.php',
+            '/stats.php',
+            '/battle_pass.php',
+            '/adventurers_guild.php',
+            '/pvp.php',
+            '/merchant.php',
+            '/blacksmith.php', // keep real href for order/disable, but we will block navigation
+        ]
+        .filter(href => !hiddenSet.has(href))
+            .forEach(href => {
+                wrapWithExpandButton(nav.querySelector(`.side-nav-item[href="${href}"]`));
+            });
 
-      // ------------------------------
-      // 6.1) Rebrand Blacksmith → "Artisans Guild" but KEEP href
-      //      and BLOCK navigation; make header toggle the submenu.
-      // ------------------------------
-      (function rebrandBlacksmithAsHeader() {
-          if (hiddenSet.has('/blacksmith.php')) return;
-          const smithItem = nav.querySelector('.side-nav-item[href="/blacksmith.php"]');
-          if (!smithItem) return;
+        // ------------------------------
+        // 6.1) Rebrand Blacksmith → "Artisans Guild" but KEEP href
+        //      and BLOCK navigation; make header toggle the submenu.
+        // ------------------------------
+        (function rebrandBlacksmithAsHeader() {
+            if (hiddenSet.has('/blacksmith.php')) return;
+            const smithItem = nav.querySelector('.side-nav-item[href="/blacksmith.php"]');
+            if (!smithItem) return;
 
-          // Rename label
-          const labelSpan = smithItem.querySelector('.side-label');
-          if (labelSpan) {
-              labelSpan.textContent = 'Artisans Guild';
-          } else {
-              smithItem.textContent = 'Artisans Guild';
-          }
+            // Rename label
+            const labelSpan = smithItem.querySelector('.side-label');
+            if (labelSpan) {
+                labelSpan.textContent = 'Artisans Guild';
+            } else {
+                smithItem.textContent = 'Artisans Guild';
+            }
 
-          // Make it look/behave like a group header (but keep href for ordering)
-          smithItem.setAttribute('role', 'button');
-          smithItem.setAttribute('aria-haspopup', 'true');
-          smithItem.setAttribute('tabindex', '0');
-          smithItem.style.cursor = 'pointer';
+            // Make it look/behave like a group header (but keep href for ordering)
+            smithItem.setAttribute('role', 'button');
+            smithItem.setAttribute('aria-haspopup', 'true');
+            smithItem.setAttribute('tabindex', '0');
+            smithItem.style.cursor = 'pointer';
 
-          // Toggle adjacent section (just like + button), block navigation
-          const wrapper = smithItem.closest('.side-nav-flex');
-          const section = wrapper?.nextElementSibling;
+            // Toggle adjacent section (just like + button), block navigation
+            const wrapper = smithItem.closest('.side-nav-flex');
+            const section = wrapper?.nextElementSibling;
 
-          function toggleSection() {
-              if (!section || !section.classList.contains('upgrade-section')) return;
-              const btn = wrapper.querySelector('.expand-btn');
-              const willExpand = !section.classList.contains('expanded');
-              section.classList.toggle('expanded', willExpand);
-              if (btn) {
-                  btn.textContent = willExpand ? '-' : '+';
-                  btn.setAttribute('aria-expanded', String(willExpand));
-              }
-          }
+            function toggleSection() {
+                if (!section || !section.classList.contains('upgrade-section')) return;
+                const btn = wrapper.querySelector('.expand-btn');
+                const willExpand = !section.classList.contains('expanded');
+                section.classList.toggle('expanded', willExpand);
+                if (btn) {
+                    btn.textContent = willExpand ? '-' : '+';
+                    btn.setAttribute('aria-expanded', String(willExpand));
+                }
+            }
 
-          // Idempotent wiring
-          if (smithItem.dataset.wired !== '1') {
-              smithItem.addEventListener('click', (e) => {
-                  e.preventDefault();   // <-- BLOCK NAVIGATION
-                  e.stopPropagation();
-                  toggleSection();
-              });
-              smithItem.addEventListener('keydown', (e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault(); // <-- BLOCK NAVIGATION
-                      toggleSection();
-                  }
-              });
-              smithItem.dataset.wired = '1';
-          }
-      })();
+            // Idempotent wiring
+            if (smithItem.dataset.wired !== '1') {
+                smithItem.addEventListener('click', (e) => {
+                    e.preventDefault(); // <-- BLOCK NAVIGATION
+                    e.stopPropagation();
+                    toggleSection();
+                });
+                smithItem.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault(); // <-- BLOCK NAVIGATION
+                        toggleSection();
+                    }
+                });
+                smithItem.dataset.wired = '1';
+            }
+        })();
 
-      // ------------------------------
-      // 7) Place sections AFTER wrappers so expand buttons work
-      // ------------------------------
-      const placements = [
-          { id: 'game-expanded',         className: 'upgrade-section', html: gameSectionHTML,     anchorHref: '/game_dash.php',         where: 'after' },
-          { id: 'guild-expanded',        className: 'upgrade-section', html: guildSectionHTML,    anchorHref: '/guild_dash.php',        where: 'after' },
-          { id: 'battle-pass-expanded',  className: 'upgrade-section', html: '',                  anchorHref: '/battle_pass.php',       where: 'after' },
-          { id: 'quest-expanded',        className: 'upgrade-section', html: '',                  anchorHref: '/adventurers_guild.php', where: 'after' },
-          { id: 'stats-expanded',        className: 'upgrade-section', html: statsSectionHTML,    anchorHref: '/stats.php',             where: 'after' },
-          { id: 'pvp-expanded',          className: 'upgrade-section', html: pvpSectionHTML,      anchorHref: '/pvp.php',               where: 'after' },
-          { id: 'merchant-expanded',     className: 'upgrade-section', html: merchantSectionHTML, anchorHref: '/merchant.php',          where: 'after' },
-          { id: 'blacksmith-expanded',   className: 'upgrade-section', html: artisansSectionHTML, anchorHref: '/blacksmith.php',        where: 'after' },
-      ];
+        // ------------------------------
+        // 7) Place sections AFTER wrappers so expand buttons work
+        // ------------------------------
+        const placements = [{
+                id: 'game-expanded',
+                className: 'upgrade-section',
+                html: gameSectionHTML,
+                anchorHref: '/game_dash.php',
+                where: 'after'
+            },
+            {
+                id: 'guild-expanded',
+                className: 'upgrade-section',
+                html: guildSectionHTML,
+                anchorHref: '/guild_dash.php',
+                where: 'after'
+            },
+            {
+                id: 'battle-pass-expanded',
+                className: 'upgrade-section',
+                html: '',
+                anchorHref: '/battle_pass.php',
+                where: 'after'
+            },
+            {
+                id: 'quest-expanded',
+                className: 'upgrade-section',
+                html: '',
+                anchorHref: '/adventurers_guild.php',
+                where: 'after'
+            },
+            {
+                id: 'stats-expanded',
+                className: 'upgrade-section',
+                html: statsSectionHTML,
+                anchorHref: '/stats.php',
+                where: 'after'
+            },
+            {
+                id: 'pvp-expanded',
+                className: 'upgrade-section',
+                html: pvpSectionHTML,
+                anchorHref: '/pvp.php',
+                where: 'after'
+            },
+            {
+                id: 'merchant-expanded',
+                className: 'upgrade-section',
+                html: merchantSectionHTML,
+                anchorHref: '/merchant.php',
+                where: 'after'
+            },
+            {
+                id: 'blacksmith-expanded',
+                className: 'upgrade-section',
+                html: artisansSectionHTML,
+                anchorHref: '/blacksmith.php',
+                where: 'after'
+            },
+        ];
 
-      placements.forEach(p => {
-          if (hiddenSet.has(p.anchorHref)) return;
-          const el = ensureSection(p.id, p.className, p.html);
-          placeRelativeTo(p.anchorHref, el, p.where);
-      });
+        placements.forEach(p => {
+            if (hiddenSet.has(p.anchorHref)) return;
+            const el = ensureSection(p.id, p.className, p.html);
+            placeRelativeTo(p.anchorHref, el, p.where);
+        });
 
-      // ------------------------------
-      // 8) Stats pill in Stats link (unchanged)
-      // ------------------------------
-      if (!hiddenSet.has('/stats.php')) {
-          const statsItem = nav.querySelector('.side-nav-item[href="/stats.php"]');
-          if (statsItem && !document.getElementById('stats-menu-text')) {
-              const statsMenuText = document.createElement('span');
-              statsMenuText.id = 'stats-menu-text';
-              statsMenuText.innerHTML = `
+        // ------------------------------
+        // 8) Stats pill in Stats link (unchanged)
+        // ------------------------------
+        if (!hiddenSet.has('/stats.php')) {
+            const statsItem = nav.querySelector('.side-nav-item[href="/stats.php"]');
+            if (statsItem && !document.getElementById('stats-menu-text')) {
+                const statsMenuText = document.createElement('span');
+                statsMenuText.id = 'stats-menu-text';
+                statsMenuText.innerHTML = `
           <span class="side-stat-pill" id="sidebar-points">-</span> 🔵
         `;
-          statsItem.appendChild(statsMenuText);
-      }
+                statsItem.appendChild(statsMenuText);
+            }
+        }
+
+        // ------------------------------
+        // 9) Settings launcher (unchanged, idempotent)
+        // ------------------------------
+        let settingsLink = document.getElementById('nav-order-btn');
+        if (!settingsLink) {
+            settingsLink = document.createElement('a');
+            settingsLink.id = 'nav-order-btn';
+            settingsLink.className = 'side-nav-settings';
+            settingsLink.setAttribute('role', 'button');
+            settingsLink.setAttribute('aria-label', 'Customize Sidebar Navigation');
+            settingsLink.textContent = '⚙️ Sidebar Settings';
+            settingsLink.href = '#';
+
+            settingsLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                const panel = document.getElementById('nav-order-panel');
+                if (!panel) {
+                    console.warn('Panel not found — did you call initOrderPanel()?');
+                    return;
+                }
+                if (panel.classList.contains('open')) {
+                    closeOrderPanel();
+                } else {
+                    openOrderPanel();
+                }
+            });
+        }
+        nav.appendChild(settingsLink);
+
+        // Wire the order UI once (guarded by your init function)
+        initNavOrderUI({
+            onSave: (prefs) => {
+                modifySideNav();
+                console.log('Saved nav prefs:', prefs);
+            },
+            onReset: (prefs) => {
+                modifySideNav();
+                console.log('Reset nav prefs:', prefs);
+            }
+        });
+
+        if (!document.getElementById('nav-order-panel')) {
+            initOrderPanel();
+        }
+    } finally {
+        // release rebuild lock
+        nav.dataset.rebuilding = '';
     }
-
-      // ------------------------------
-      // 9) Settings launcher (unchanged, idempotent)
-      // ------------------------------
-      let settingsLink = document.getElementById('nav-order-btn');
-      if (!settingsLink) {
-          settingsLink = document.createElement('a');
-          settingsLink.id = 'nav-order-btn';
-          settingsLink.className = 'side-nav-settings';
-          settingsLink.setAttribute('role', 'button');
-          settingsLink.setAttribute('aria-label', 'Customize Sidebar Navigation');
-          settingsLink.textContent = '⚙️ Sidebar Settings';
-          settingsLink.href = '#';
-
-          settingsLink.addEventListener('click', (e) => {
-              e.preventDefault();
-              const panel = document.getElementById('nav-order-panel');
-              if (!panel) {
-                  console.warn('Panel not found — did you call initOrderPanel()?');
-                  return;
-              }
-              if (panel.classList.contains('open')) {
-                  closeOrderPanel();
-              } else {
-                  openOrderPanel();
-              }
-          });
-      }
-      nav.appendChild(settingsLink);
-
-      // Wire the order UI once (guarded by your init function)
-      initNavOrderUI({
-          onSave: (prefs) => {
-              modifySideNav();
-              console.log('Saved nav prefs:', prefs);
-          },
-          onReset: (prefs) => {
-              modifySideNav();
-              console.log('Reset nav prefs:', prefs);
-          }
-      });
-
-      if (!document.getElementById('nav-order-panel')) {
-          initOrderPanel();
-      }
-  } finally {
-      // release rebuild lock
-      nav.dataset.rebuilding = '';
-  }
 
 
     // ------------------------------
-// 10) Weekly ranking → inject into small-user meta
-// ------------------------------
-(function initWeeklyRankingInjection() {
-  const CACHE_KEY = 'weekly_rank_summary_v1';
-  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+    // 10) Weekly ranking → inject into small-user meta
+    // ------------------------------
+    (function initWeeklyRankingInjection() {
+        const CACHE_KEY = 'weekly_rank_summary_v1';
+        const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-  /**
-   * Try to get cached { rankText, damageText } from sessionStorage
-   */
-  function getCachedWeekly() {
-    try {
-      const raw = sessionStorage.getItem(CACHE_KEY);
-      if (!raw) return null;
-      const obj = JSON.parse(raw);
-      if (!obj || !obj.ts) return null;
-      if (Date.now() - obj.ts > CACHE_TTL_MS) return null;
-      return obj.data || null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Put { rankText, damageText } in cache
-   */
-  function setCachedWeekly(data) {
-    try {
-      sessionStorage.setItem(
-        CACHE_KEY,
-        JSON.stringify({ ts: Date.now(), data })
-      );
-    } catch {}
-  }
-
-  /**
-   * Fetch /weekly.php and parse the two spans under #quick-rank-display:
-   *  - First span → rankText (e.g., "#59")
-   *  - Second span → damageText (e.g., "408,177,650,902 damage")
-   */
-  async function fetchWeeklySummary() {
-    const cached = getCachedWeekly();
-    if (cached) return cached;
-
-    const resp = await fetch('/weekly.php', { credentials: 'same-origin' });
-    if (!resp.ok) throw new Error(`weekly.php HTTP ${resp.status}`);
-    const html = await resp.text();
-
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const anchor = doc.querySelector('#quick-rank-display');
-    if (!anchor) throw new Error('quick-rank-display not found');
-
-    // Find the two spans inside the ranking row. Be defensive in selection
-    const spanCandidates = anchor.querySelectorAll('span');
-    if (!spanCandidates || spanCandidates.length === 0) {
-      throw new Error('No spans found under quick-rank-display');
-    }
-
-    // Rank = first span that looks like "#<number>"
-    let rankText = null;
-    let rankSpanIndex = -1;
-    for (let i = 0; i < spanCandidates.length; i++) {
-      const t = (spanCandidates[i].textContent || '').trim();
-      if (/^#\d+$/i.test(t)) {
-        rankText = t;
-        rankSpanIndex = i;
-        break;
-      }
-    }
-    // Damage = next span after rank, or fallback to any span containing 'damage'
-    let damageText = null;
-    if (rankSpanIndex >= 0 && spanCandidates[rankSpanIndex + 1]) {
-      damageText = (spanCandidates[rankSpanIndex + 1].textContent || '').trim();
-    }
-    if (!damageText) {
-      for (const sp of spanCandidates) {
-        const t = (sp.textContent || '').trim();
-        if (/damage/i.test(t)) {
-          damageText = t;
-          break;
+        /**
+         * Try to get cached { rankText, damageText } from sessionStorage
+         */
+        function getCachedWeekly() {
+            try {
+                const raw = sessionStorage.getItem(CACHE_KEY);
+                if (!raw) return null;
+                const obj = JSON.parse(raw);
+                if (!obj || !obj.ts) return null;
+                if (Date.now() - obj.ts > CACHE_TTL_MS) return null;
+                return obj.data || null;
+            } catch {
+                return null;
+            }
         }
-      }
-    }
 
-    // Normalize damage text (remove leading bullets)
-    if (damageText) {
-      damageText = damageText.replace(/^[•\s]+/, '').trim();
-    }
+        /**
+         * Put { rankText, damageText } in cache
+         */
+        function setCachedWeekly(data) {
+            try {
+                sessionStorage.setItem(
+                    CACHE_KEY,
+                    JSON.stringify({
+                        ts: Date.now(),
+                        data
+                    })
+                );
+            } catch {}
+        }
 
-    const data = { rankText, damageText };
-    setCachedWeekly(data);
-    return data;
-  }
+        /**
+         * Fetch /weekly.php and parse the two spans under #quick-rank-display:
+         *  - First span → rankText (e.g., "#59")
+         *  - Second span → damageText (e.g., "408,177,650,902 damage")
+         */
+        async function fetchWeeklySummary() {
+            const cached = getCachedWeekly();
+            if (cached) return cached;
 
-  /**
-   * Update the small card:
-   *  - Append "Ranking #XX" to .small-level (idempotent / replace if exists)
-   *  - Insert/update a sibling div under it with the damage text
-   */
-  function updateSmallUserMeta({ rankText, damageText }) {
-    const levelEl = document.querySelector('.small-user .small-user-meta .small-level');
-    if (!levelEl) return; // nothing to do
+            const resp = await fetch('/weekly.php', {
+                credentials: 'same-origin'
+            });
+            if (!resp.ok) throw new Error(`weekly.php HTTP ${resp.status}`);
+            const html = await resp.text();
 
-    // Remove any previous " Ranking #NNN" suffix to keep idempotent
-    const prev = (levelEl.textContent || '').replace(/\s*Ranking\s*#\d+\s*$/i, '').trim();
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const anchor = doc.querySelector('#quick-rank-display');
+            if (!anchor) throw new Error('quick-rank-display not found');
 
-    if (rankText) {
-      levelEl.textContent = `${prev} Ranking ${rankText}`;
-    } else {
-      levelEl.textContent = prev; // no rank available
-    }
+            // Find the two spans inside the ranking row. Be defensive in selection
+            const spanCandidates = anchor.querySelectorAll('span');
+            if (!spanCandidates || spanCandidates.length === 0) {
+                throw new Error('No spans found under quick-rank-display');
+            }
 
-    // Upsert damage line just under .small-level
-    const parent = levelEl.parentElement;
-    if (!parent) return;
+            // Rank = first span that looks like "#<number>"
+            let rankText = null;
+            let rankSpanIndex = -1;
+            for (let i = 0; i < spanCandidates.length; i++) {
+                const t = (spanCandidates[i].textContent || '').trim();
+                if (/^#\d+$/i.test(t)) {
+                    rankText = t;
+                    rankSpanIndex = i;
+                    break;
+                }
+            }
+            // Damage = next span after rank, or fallback to any span containing 'damage'
+            let damageText = null;
+            if (rankSpanIndex >= 0 && spanCandidates[rankSpanIndex + 1]) {
+                damageText = (spanCandidates[rankSpanIndex + 1].textContent || '').trim();
+            }
+            if (!damageText) {
+                for (const sp of spanCandidates) {
+                    const t = (sp.textContent || '').trim();
+                    if (/damage/i.test(t)) {
+                        damageText = t;
+                        break;
+                    }
+                }
+            }
 
-    let dmgEl = parent.querySelector('#weekly-damage');
-    const damageString = damageText || ''; // e.g. "408,177,650,902 damage"
+            // Normalize damage text (remove leading bullets)
+            if (damageText) {
+                damageText = damageText.replace(/^[•\s]+/, '').trim();
+            }
 
-    if (!dmgEl) {
-      dmgEl = document.createElement('div');
-      dmgEl.id = 'weekly-damage';
-      // optional: subtle styling; tweak as you like
-      dmgEl.style.fontSize = '11px';
-      dmgEl.style.color = '#89b4fa';
-      dmgEl.style.marginTop = '2px';
-      levelEl.insertAdjacentElement('afterend', dmgEl);
-    }
-    dmgEl.textContent = damageString;
-  }
+            const data = {
+                rankText,
+                damageText
+            };
+            setCachedWeekly(data);
+            return data;
+        }
 
-  // Kick it off (fire-and-forget so modifySideNav doesn't need to be async)
-  fetchWeeklySummary()
-    .then(updateSmallUserMeta)
-    .catch((err) => {
-      // Non-fatal; keep sidebar working even if weekly fails
-      console.warn('[weekly] Unable to inject weekly rank:', err);
-    });
-})();
+        /**
+         * Update the small card:
+         *  - Append "Ranking #XX" to .small-level (idempotent / replace if exists)
+         *  - Insert/update a sibling div under it with the damage text
+         */
+        function updateSmallUserMeta({
+            rankText,
+            damageText
+        }) {
+            const levelEl = document.querySelector('.small-user .small-user-meta .small-level');
+            if (!levelEl) return; // nothing to do
+
+            // Remove any previous " Ranking #NNN" suffix to keep idempotent
+            const prev = (levelEl.textContent || '').replace(/\s*Ranking\s*#\d+\s*$/i, '').trim();
+
+            if (rankText) {
+                levelEl.textContent = `${prev} Ranking ${rankText}`;
+            } else {
+                levelEl.textContent = prev; // no rank available
+            }
+
+            // Upsert damage line just under .small-level
+            const parent = levelEl.parentElement;
+            if (!parent) return;
+
+            let dmgEl = parent.querySelector('#weekly-damage');
+            const damageString = damageText || ''; // e.g. "408,177,650,902 damage"
+
+            if (!dmgEl) {
+                dmgEl = document.createElement('div');
+                dmgEl.id = 'weekly-damage';
+                // optional: subtle styling; tweak as you like
+                dmgEl.style.fontSize = '11px';
+                dmgEl.style.color = '#89b4fa';
+                dmgEl.style.marginTop = '2px';
+                levelEl.insertAdjacentElement('afterend', dmgEl);
+            }
+            dmgEl.textContent = damageString;
+        }
+
+        // Kick it off (fire-and-forget so modifySideNav doesn't need to be async)
+        fetchWeeklySummary()
+            .then(updateSmallUserMeta)
+            .catch((err) => {
+                // Non-fatal; keep sidebar working even if weekly fails
+                console.warn('[weekly] Unable to inject weekly rank:', err);
+            });
+    })();
 
     // keep your existing bootstraps
     initSidebarQuestWidget();
@@ -1255,8 +1351,8 @@ function modBlacksmith() {
         if (!topbar || !recipeGrid) return;
 
         const names = Array.from(recipeGrid.querySelectorAll('.result-name'))
-        .map(el => el.textContent.trim())
-        .filter(Boolean);
+            .map(el => el.textContent.trim())
+            .filter(Boolean);
 
         // Updated logic for extracting set name
         const firstWordOf = (raw) => {
@@ -1288,24 +1384,24 @@ function modBlacksmith() {
       gap: 8px;
     `;
 
-      // Label
-      const label = document.createElement('label');
-      const select = document.createElement('select');
-      const selectId = 'gear-dropdown';
-      label.htmlFor = selectId;
-      label.textContent = 'Forging Sets';
-      label.style.cssText = `
+        // Label
+        const label = document.createElement('label');
+        const select = document.createElement('select');
+        const selectId = 'gear-dropdown';
+        label.htmlFor = selectId;
+        label.textContent = 'Forging Sets';
+        label.style.cssText = `
       color: rgb(255, 255, 255);
       font-size: 16px;
       font-family: inherit;
     `;
 
-      // Dropdown styling
-      select.id = selectId;
-      select.className = 'gear-dropdown';
-      select.title = 'Filter gear by first word';
-      select.setAttribute('aria-label', 'Filter gear');
-      select.style.cssText = `
+        // Dropdown styling
+        select.id = selectId;
+        select.className = 'gear-dropdown';
+        select.title = 'Filter gear by first word';
+        select.setAttribute('aria-label', 'Filter gear');
+        select.style.cssText = `
       padding: 8px 12px;
       background: rgb(51, 51, 51);
       border: 1px solid rgb(51,51,51);
@@ -1318,128 +1414,128 @@ function modBlacksmith() {
       box-shadow: rgba(0, 0, 0, 0.6) 0px 6px 18px;
     `;
 
-      // "All gear" option
-      const allOption = document.createElement('option');
-      allOption.value = '';
-      allOption.textContent = 'All gear';
-      select.appendChild(allOption);
+        // "All gear" option
+        const allOption = document.createElement('option');
+        allOption.value = '';
+        allOption.textContent = 'All gear';
+        select.appendChild(allOption);
 
-      // Add options with rules applied
-      for (const val of Array.from(setGear).sort((a, b) => a.localeCompare(b))) {
-          const opt = document.createElement('option');
-          opt.value = val;
+        // Add options with rules applied
+        for (const val of Array.from(setGear).sort((a, b) => a.localeCompare(b))) {
+            const opt = document.createElement('option');
+            opt.value = val;
 
-          // Apply naming rules
-          if (val === 'Ring of the Eternal Harvest') {
-              opt.textContent = val; // keep full name, no "set"
-          } else {
-              opt.textContent = `${val} set`; // add "set"
-          }
+            // Apply naming rules
+            if (val === 'Ring of the Eternal Harvest') {
+                opt.textContent = val; // keep full name, no "set"
+            } else {
+                opt.textContent = `${val} set`; // add "set"
+            }
 
-          select.appendChild(opt);
-      }
+            select.appendChild(opt);
+        }
 
-      group.appendChild(label);
-      group.appendChild(select);
-      topbar.insertBefore(group, topbar.children[1] || null);
+        group.appendChild(label);
+        group.appendChild(select);
+        topbar.insertBefore(group, topbar.children[1] || null);
 
-      // ---- Filtering behavior ----
-      const cards = Array.from(recipeGrid.querySelectorAll('.card'));
+        // ---- Filtering behavior ----
+        const cards = Array.from(recipeGrid.querySelectorAll('.card'));
 
-      const applyFilter = (value) => {
-          cards.forEach(card => {
-              const nameEl = card.querySelector('.result-name');
-              const name = nameEl ? nameEl.textContent.trim() : '';
-              const shouldShow = !value || new RegExp(`\\b${value}\\b`, 'i').test(name);
-              card.style.display = shouldShow ? '' : 'none';
-          });
-      };
+        const applyFilter = (value) => {
+            cards.forEach(card => {
+                const nameEl = card.querySelector('.result-name');
+                const name = nameEl ? nameEl.textContent.trim() : '';
+                const shouldShow = !value || new RegExp(`\\b${value}\\b`, 'i').test(name);
+                card.style.display = shouldShow ? '' : 'none';
+            });
+        };
 
-      select.addEventListener('change', () => {
-          let filterValue = select.value;
+        select.addEventListener('change', () => {
+            let filterValue = select.value;
 
-          // If Fangbinder Amulet is part of Emerald set, filter by Emerald
-          if (filterValue === 'Emerald') {
-              filterValue = 'Fangbinder Amulet|Emerald'; // match either
-          }
+            // If Fangbinder Amulet is part of Emerald set, filter by Emerald
+            if (filterValue === 'Emerald') {
+                filterValue = 'Fangbinder Amulet|Emerald'; // match either
+            }
 
-          applyFilter(filterValue);
-      });
+            applyFilter(filterValue);
+        });
 
-      applyFilter('');
-  }
+        applyFilter('');
+    }
 };
 (() => {
-  if (!vv?.isOn?.('multiForge')) return;
+    if (!vv?.isOn?.('multiForge')) return;
 
-  const DELAY = 300;
-  const RUN_LABEL_DEFAULT = 'Forge x times';
+    const DELAY = 300;
+    const RUN_LABEL_DEFAULT = 'Forge x times';
 
-  // ---------- Helpers ----------
-  const getCard = (form) => form.closest('.card') || form;
+    // ---------- Helpers ----------
+    const getCard = (form) => form.closest('.card') || form;
 
-  const selectReqQtyNodes = (form) => {
-    // Requirements live under the card, not inside the form
-    const card = getCard(form);
-    return card.querySelectorAll('.req .qty');
-  };
+    const selectReqQtyNodes = (form) => {
+        // Requirements live under the card, not inside the form
+        const card = getCard(form);
+        return card.querySelectorAll('.req .qty');
+    };
 
-  const hasAnyBad = (form) => {
-    const card = getCard(form);
-    return !!card.querySelector('.qty.bad');
-  };
+    const hasAnyBad = (form) => {
+        const card = getCard(form);
+        return !!card.querySelector('.qty.bad');
+    };
 
-  // Bullet-proof max-forge calculator for strings like "30899/100"
-  const computeMaxForges = (form) => {
-    const qtyNodes = selectReqQtyNodes(form);
-    if (!qtyNodes.length) return 0;
+    // Bullet-proof max-forge calculator for strings like "30899/100"
+    const computeMaxForges = (form) => {
+        const qtyNodes = selectReqQtyNodes(form);
+        if (!qtyNodes.length) return 0;
 
-    let maxForges = Infinity;
+        let maxForges = Infinity;
 
-    for (const q of qtyNodes) {
-      // Combine all text under .qty (handles nested spans)
-      let raw = q.textContent.trim();
-      // Keep only digits and slash
-      raw = raw.replace(/[^0-9/]/g, '');
-      const parts = raw.split('/');
+        for (const q of qtyNodes) {
+            // Combine all text under .qty (handles nested spans)
+            let raw = q.textContent.trim();
+            // Keep only digits and slash
+            raw = raw.replace(/[^0-9/]/g, '');
+            const parts = raw.split('/');
 
-      if (parts.length !== 2) return 0;
+            if (parts.length !== 2) return 0;
 
-      const have = parseInt(parts[0], 10);
-      const need = parseInt(parts[1], 10);
+            const have = parseInt(parts[0], 10);
+            const need = parseInt(parts[1], 10);
 
-      if (!Number.isFinite(have) || !Number.isFinite(need) || need <= 0) {
-        return 0;
-      }
+            if (!Number.isFinite(have) || !Number.isFinite(need) || need <= 0) {
+                return 0;
+            }
 
-      const possible = Math.floor(have / need);
-      maxForges = Math.min(maxForges, possible);
-    }
+            const possible = Math.floor(have / need);
+            maxForges = Math.min(maxForges, possible);
+        }
 
-    return Number.isFinite(maxForges) && maxForges >= 0 ? maxForges : 0;
-  };
+        return Number.isFinite(maxForges) && maxForges >= 0 ? maxForges : 0;
+    };
 
-  // Create or reuse the multi-forge UI on a form
-  const ensureUI = (form) => {
-    // Hide original single-forge button if present
-    const forgeBtn = form.querySelector('.forge-btn');
-    if (forgeBtn) forgeBtn.style.display = 'none';
+    // Create or reuse the multi-forge UI on a form
+    const ensureUI = (form) => {
+        // Hide original single-forge button if present
+        const forgeBtn = form.querySelector('.forge-btn');
+        if (forgeBtn) forgeBtn.style.display = 'none';
 
-    // Reuse existing controls if they exist (from a prior run)
-    let box = form.querySelector('.forge-times-box');
-    let runBtn = Array.from(form.querySelectorAll('button[type="button"]'))
-      .find(b => /forge/i.test(b.textContent || '') && !/stop/i.test(b.textContent || ''));
-    let stopBtn = Array.from(form.querySelectorAll('button[type="button"]'))
-      .find(b => /stop/i.test(b.textContent || ''));
+        // Reuse existing controls if they exist (from a prior run)
+        let box = form.querySelector('.forge-times-box');
+        let runBtn = Array.from(form.querySelectorAll('button[type="button"]'))
+            .find(b => /forge/i.test(b.textContent || '') && !/stop/i.test(b.textContent || ''));
+        let stopBtn = Array.from(form.querySelectorAll('button[type="button"]'))
+            .find(b => /stop/i.test(b.textContent || ''));
 
-    // Create if missing
-    if (!box) {
-      box = document.createElement('input');
-      box.type = 'number';
-      box.min = '1';
-      box.placeholder = 'Times';
-      box.className = 'forge-times-box';
-      box.style.cssText = `
+        // Create if missing
+        if (!box) {
+            box = document.createElement('input');
+            box.type = 'number';
+            box.min = '1';
+            box.placeholder = 'Times';
+            box.className = 'forge-times-box';
+            box.style.cssText = `
         width:70px;
         padding:8px 12px;
         background:#333;
@@ -1451,14 +1547,14 @@ function modBlacksmith() {
         box-shadow:0 6px 18px rgba(0,0,0,.6);
         margin-right:6px;
       `;
-      form.appendChild(box);
-    }
+            form.appendChild(box);
+        }
 
-    if (!runBtn) {
-      runBtn = document.createElement('button');
-      runBtn.type = 'button';
-      runBtn.textContent = RUN_LABEL_DEFAULT;
-      runBtn.style.cssText = `
+        if (!runBtn) {
+            runBtn = document.createElement('button');
+            runBtn.type = 'button';
+            runBtn.textContent = RUN_LABEL_DEFAULT;
+            runBtn.style.cssText = `
         flex:1;
         background:var(--accent);
         color:#111;
@@ -1469,14 +1565,14 @@ function modBlacksmith() {
         cursor:pointer;
         transition:filter .2s ease, transform .05s ease-in-out;
       `;
-      form.appendChild(runBtn);
-    }
+            form.appendChild(runBtn);
+        }
 
-    if (!stopBtn) {
-      stopBtn = document.createElement('button');
-      stopBtn.type = 'button';
-      stopBtn.textContent = 'Stop';
-      stopBtn.style.cssText = `
+        if (!stopBtn) {
+            stopBtn = document.createElement('button');
+            stopBtn.type = 'button';
+            stopBtn.textContent = 'Stop';
+            stopBtn.style.cssText = `
         margin-left:4px;
         padding:10px 12px;
         border-radius:10px;
@@ -1484,215 +1580,243 @@ function modBlacksmith() {
         cursor:pointer;
         display:none;
       `;
-      form.appendChild(stopBtn);
-    }
+            form.appendChild(stopBtn);
+        }
 
-    // Button press affordance
-    runBtn.onmousedown = () => runBtn.style.transform = 'scale(.97)';
-    runBtn.onmouseup = () => runBtn.style.transform = '';
-    runBtn.onmouseleave = () => runBtn.style.transform = '';
+        // Button press affordance
+        runBtn.onmousedown = () => runBtn.style.transform = 'scale(.97)';
+        runBtn.onmouseup = () => runBtn.style.transform = '';
+        runBtn.onmouseleave = () => runBtn.style.transform = '';
 
-    // Hidden live region for polite announcements
-    let srLive = form.querySelector('[aria-live="polite"][aria-atomic="true"]');
-    if (!srLive) {
-      srLive = document.createElement('div');
-      srLive.setAttribute('aria-live', 'polite');
-      srLive.setAttribute('aria-atomic', 'true');
-      srLive.style.cssText = 'position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden;';
-      form.appendChild(srLive);
-    }
+        // Hidden live region for polite announcements
+        let srLive = form.querySelector('[aria-live="polite"][aria-atomic="true"]');
+        if (!srLive) {
+            srLive = document.createElement('div');
+            srLive.setAttribute('aria-live', 'polite');
+            srLive.setAttribute('aria-atomic', 'true');
+            srLive.style.cssText = 'position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden;';
+            form.appendChild(srLive);
+        }
 
-    return { box, runBtn, stopBtn, srLive };
-  };
-
-  // Update ARIA, input max, and enabled/disabled states based on requirements
-  const refreshEligibility = (form, ui) => {
-    const { box, runBtn } = ui;
-
-    if (hasAnyBad(form)) {
-      runBtn.disabled = true;
-      box.disabled = true;
-      box.removeAttribute('max');
-
-      box.setAttribute('aria-label', 'Cannot forge: missing materials');
-      box.setAttribute('title', 'Cannot forge: missing materials');
-
-      runBtn.textContent = 'Missing materials';
-      runBtn.style.filter = 'grayscale(1)';
-      runBtn.style.cursor = 'not-allowed';
-      return { eligible: false, maxForges: 0 };
-    }
-
-    const maxForges = computeMaxForges(form);
-
-    runBtn.disabled = false;
-    box.disabled = false;
-    runBtn.style.filter = '';
-    runBtn.style.cursor = 'pointer';
-    if (!/Forging /.test(runBtn.textContent)) {
-      runBtn.textContent = RUN_LABEL_DEFAULT;
-    }
-
-    box.setAttribute('aria-label', `Maximum possible forges: ${maxForges}`);
-    box.setAttribute('title', `Max: ${maxForges}`);
-    // Constrain the input (at least 1)
-    box.setAttribute('max', String(Math.max(1, maxForges)));
-
-    // Clamp current value if it exceeds max
-    const v = parseInt(box.value || '0', 10);
-    if (Number.isFinite(v) && v > maxForges) {
-      box.value = String(maxForges);
-    }
-
-    return { eligible: maxForges > 0, maxForges };
-  };
-
-  const setCountdownLabel = (btn, remaining) => {
-    btn.textContent = `Forging ${remaining}`;
-  };
-  const resetRunBtnLabel = (btn) => {
-    btn.textContent = RUN_LABEL_DEFAULT;
-  };
-
-  // ---------- Main ----------
-  document.querySelectorAll('.forge form').forEach(form => {
-    const ui = ensureUI(form);
-
-    // Initial eligibility & ARIA update
-    let { eligible, maxForges } = refreshEligibility(form, ui);
-
-    const card = getCard(form);
-
-    // FIX: Observe ONLY the requirements container, not the entire card, to avoid feedback loop
-    const reqRoot = card.querySelector('.req') || card;
-
-    // Avoid rebinding observers if script runs multiple times
-    if (!reqRoot.dataset.mfObserved) {
-      reqRoot.dataset.mfObserved = '1';
-
-      // FIX: Debounce + pause observer during UI updates
-      let updateScheduled = false;
-      const mo = new MutationObserver(() => {
-        if (updateScheduled) return;
-        updateScheduled = true;
-        requestAnimationFrame(() => {
-          updateScheduled = false;
-
-          // Temporarily stop observing while we mutate the DOM (prevents feedback)
-          mo.disconnect(); // FIX: pause
-          try {
-            const r = refreshEligibility(form, ui);
-            const changed = (r.eligible !== eligible) || (r.maxForges !== maxForges);
-            eligible = r.eligible;
-            maxForges = r.maxForges;
-            if (changed) {
-              ui.srLive.textContent = eligible
-                ? `Maximum possible forges updated to ${maxForges}`
-                : 'Forging is not available due to missing materials';
-            }
-          } finally {
-            // Reattach to reqRoot only
-            mo.observe(reqRoot, { subtree: true, childList: true, characterData: true });
-          }
-        });
-      });
-
-      mo.observe(reqRoot, { subtree: true, childList: true, characterData: true });
-    }
-
-    // Avoid rebinding if this script runs multiple times
-    if (ui.runBtn.dataset.mfBound === '1') return;
-    ui.runBtn.dataset.mfBound = '1';
-
-    let stop = false;
-
-    ui.stopBtn.onclick = () => {
-      stop = true;
-      ui.stopBtn.style.display = 'none';
+        return {
+            box,
+            runBtn,
+            stopBtn,
+            srLive
+        };
     };
 
-    ui.runBtn.onclick = async () => {
-      // Recompute right before running
-      ({ eligible, maxForges } = refreshEligibility(form, ui));
-      if (!eligible || maxForges <= 0) {
-        alert('Missing or invalid materials.');
-        return;
-      }
+    // Update ARIA, input max, and enabled/disabled states based on requirements
+    const refreshEligibility = (form, ui) => {
+        const {
+            box,
+            runBtn
+        } = ui;
 
-      let TIMES = parseInt(ui.box.value, 10);
-      if (!Number.isFinite(TIMES) || TIMES < 1) {
-        alert('Enter a valid number');
-        return;
-      }
+        if (hasAnyBad(form)) {
+            runBtn.disabled = true;
+            box.disabled = true;
+            box.removeAttribute('max');
 
-      if (TIMES > maxForges) {
-        TIMES = maxForges;
-        ui.box.value = String(TIMES);
-        ui.srLive.textContent = `Clamped to maximum possible forges: ${TIMES}`;
-      }
+            box.setAttribute('aria-label', 'Cannot forge: missing materials');
+            box.setAttribute('title', 'Cannot forge: missing materials');
 
-      const url = form.action;
-
-      stop = false;
-      ui.runBtn.disabled = true;
-      ui.box.disabled = true;
-      ui.stopBtn.style.display = '';
-
-      setCountdownLabel(ui.runBtn, TIMES);
-
-      for (let i = 0; i < TIMES; i++) {
-        if (stop) break;
-
-        try {
-          // FIX (optional): rebuild FormData each iteration in case the form changes after POST
-          const formData = new FormData(form); // moved inside loop
-          const res = await fetch(url, {
-            method: 'POST',
-            body: formData,
-            credentials: 'same-origin',
-          });
-          // Consume response to completion to avoid hanging streams
-          await res.text();
-        } catch (e) {
-          console.error('Forge failed', e);
-          break;
+            runBtn.textContent = 'Missing materials';
+            runBtn.style.filter = 'grayscale(1)';
+            runBtn.style.cursor = 'not-allowed';
+            return {
+                eligible: false,
+                maxForges: 0
+            };
         }
 
-        const remaining = TIMES - (i + 1);
-        setCountdownLabel(ui.runBtn, remaining);
+        const maxForges = computeMaxForges(form);
 
-        if (remaining > 0) {
-          await new Promise(r => setTimeout(r, DELAY));
+        runBtn.disabled = false;
+        box.disabled = false;
+        runBtn.style.filter = '';
+        runBtn.style.cursor = 'pointer';
+        if (!/Forging /.test(runBtn.textContent)) {
+            runBtn.textContent = RUN_LABEL_DEFAULT;
         }
-      }
 
-      ui.runBtn.disabled = false;
-      ui.box.disabled = false;
-      ui.stopBtn.style.display = 'none';
+        box.setAttribute('aria-label', `Maximum possible forges: ${maxForges}`);
+        box.setAttribute('title', `Max: ${maxForges}`);
+        // Constrain the input (at least 1)
+        box.setAttribute('max', String(Math.max(1, maxForges)));
 
-      if (stop) {
-        ui.runBtn.textContent = 'Stopped';
-        ui.srLive.textContent = 'Forge stopped by user';
-      } else {
-        resetRunBtnLabel(ui.runBtn);
-        ui.srLive.textContent = 'Forge run complete';
-      }
+        // Clamp current value if it exceeds max
+        const v = parseInt(box.value || '0', 10);
+        if (Number.isFinite(v) && v > maxForges) {
+            box.value = String(maxForges);
+        }
 
-      // BIG VISIBLE MESSAGE + refresh
-      // FIX: add ID so we don't inject duplicate styles on repeat runs
-      let style = document.getElementById('mf-keyframes');
-      if (!style) {
-        style = document.createElement('style');
-        style.id = 'mf-keyframes';
-        style.textContent = `
+        return {
+            eligible: maxForges > 0,
+            maxForges
+        };
+    };
+
+    const setCountdownLabel = (btn, remaining) => {
+        btn.textContent = `Forging ${remaining}`;
+    };
+    const resetRunBtnLabel = (btn) => {
+        btn.textContent = RUN_LABEL_DEFAULT;
+    };
+
+    // ---------- Main ----------
+    document.querySelectorAll('.forge form').forEach(form => {
+        const ui = ensureUI(form);
+
+        // Initial eligibility & ARIA update
+        let {
+            eligible,
+            maxForges
+        } = refreshEligibility(form, ui);
+
+        const card = getCard(form);
+
+        // FIX: Observe ONLY the requirements container, not the entire card, to avoid feedback loop
+        const reqRoot = card.querySelector('.req') || card;
+
+        // Avoid rebinding observers if script runs multiple times
+        if (!reqRoot.dataset.mfObserved) {
+            reqRoot.dataset.mfObserved = '1';
+
+            // FIX: Debounce + pause observer during UI updates
+            let updateScheduled = false;
+            const mo = new MutationObserver(() => {
+                if (updateScheduled) return;
+                updateScheduled = true;
+                requestAnimationFrame(() => {
+                    updateScheduled = false;
+
+                    // Temporarily stop observing while we mutate the DOM (prevents feedback)
+                    mo.disconnect(); // FIX: pause
+                    try {
+                        const r = refreshEligibility(form, ui);
+                        const changed = (r.eligible !== eligible) || (r.maxForges !== maxForges);
+                        eligible = r.eligible;
+                        maxForges = r.maxForges;
+                        if (changed) {
+                            ui.srLive.textContent = eligible ?
+                                `Maximum possible forges updated to ${maxForges}` :
+                                'Forging is not available due to missing materials';
+                        }
+                    } finally {
+                        // Reattach to reqRoot only
+                        mo.observe(reqRoot, {
+                            subtree: true,
+                            childList: true,
+                            characterData: true
+                        });
+                    }
+                });
+            });
+
+            mo.observe(reqRoot, {
+                subtree: true,
+                childList: true,
+                characterData: true
+            });
+        }
+
+        // Avoid rebinding if this script runs multiple times
+        if (ui.runBtn.dataset.mfBound === '1') return;
+        ui.runBtn.dataset.mfBound = '1';
+
+        let stop = false;
+
+        ui.stopBtn.onclick = () => {
+            stop = true;
+            ui.stopBtn.style.display = 'none';
+        };
+
+        ui.runBtn.onclick = async () => {
+            // Recompute right before running
+            ({
+                eligible,
+                maxForges
+            } = refreshEligibility(form, ui));
+            if (!eligible || maxForges <= 0) {
+                alert('Missing or invalid materials.');
+                return;
+            }
+
+            let TIMES = parseInt(ui.box.value, 10);
+            if (!Number.isFinite(TIMES) || TIMES < 1) {
+                alert('Enter a valid number');
+                return;
+            }
+
+            if (TIMES > maxForges) {
+                TIMES = maxForges;
+                ui.box.value = String(TIMES);
+                ui.srLive.textContent = `Clamped to maximum possible forges: ${TIMES}`;
+            }
+
+            const url = form.action;
+
+            stop = false;
+            ui.runBtn.disabled = true;
+            ui.box.disabled = true;
+            ui.stopBtn.style.display = '';
+
+            setCountdownLabel(ui.runBtn, TIMES);
+
+            for (let i = 0; i < TIMES; i++) {
+                if (stop) break;
+
+                try {
+                    // FIX (optional): rebuild FormData each iteration in case the form changes after POST
+                    const formData = new FormData(form); // moved inside loop
+                    const res = await fetch(url, {
+                        method: 'POST',
+                        body: formData,
+                        credentials: 'same-origin',
+                    });
+                    // Consume response to completion to avoid hanging streams
+                    await res.text();
+                } catch (e) {
+                    console.error('Forge failed', e);
+                    break;
+                }
+
+                const remaining = TIMES - (i + 1);
+                setCountdownLabel(ui.runBtn, remaining);
+
+                if (remaining > 0) {
+                    await new Promise(r => setTimeout(r, DELAY));
+                }
+            }
+
+            ui.runBtn.disabled = false;
+            ui.box.disabled = false;
+            ui.stopBtn.style.display = 'none';
+
+            if (stop) {
+                ui.runBtn.textContent = 'Stopped';
+                ui.srLive.textContent = 'Forge stopped by user';
+            } else {
+                resetRunBtnLabel(ui.runBtn);
+                ui.srLive.textContent = 'Forge run complete';
+            }
+
+            // BIG VISIBLE MESSAGE + refresh
+            // FIX: add ID so we don't inject duplicate styles on repeat runs
+            let style = document.getElementById('mf-keyframes');
+            if (!style) {
+                style = document.createElement('style');
+                style.id = 'mf-keyframes';
+                style.textContent = `
           @keyframes fadeIn{from{opacity:0}to{opacity:1}}
           @keyframes pop{from{transform:scale(.85)}to{transform:scale(1)}}
         `;
-        document.head.appendChild(style);
-      }
+                document.head.appendChild(style);
+            }
 
-      const overlay = document.createElement('div');
-      overlay.style.cssText = `
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
         position:fixed;
         inset:0;
         background:rgba(0,0,0,.75);
@@ -1704,11 +1828,11 @@ function modBlacksmith() {
         animation:fadeIn .25s ease;
       `;
 
-      const panel = document.createElement('div');
-      panel.textContent = stop
-        ? 'Forge stopped ✔ Refreshing...'
-        : 'Forge run complete ✔ Refreshing...';
-      panel.style.cssText = `
+            const panel = document.createElement('div');
+            panel.textContent = stop ?
+                'Forge stopped ✔ Refreshing...' :
+                'Forge run complete ✔ Refreshing...';
+            panel.style.cssText = `
         background:linear-gradient(145deg,#1f1f1f,#2c2c2c);
         color:#fff;
         font-size:22px;
@@ -1722,14 +1846,14 @@ function modBlacksmith() {
         cursor:pointer;
       `;
 
-      overlay.appendChild(panel);
-      document.body.appendChild(overlay);
+            overlay.appendChild(panel);
+            document.body.appendChild(overlay);
 
-      const refresh = () => location.reload();
-      overlay.onclick = refresh;
-      setTimeout(refresh, 2000);
-    };
-  });
+            const refresh = () => location.reload();
+            overlay.onclick = refresh;
+            setTimeout(refresh, 2000);
+        };
+    });
 })();
 
 function modForge() {
@@ -1740,8 +1864,8 @@ function modForge() {
         if (!topbar || !recipeGrid) return;
 
         const names = Array.from(recipeGrid.querySelectorAll('.name'))
-        .map(el => el.textContent.trim())
-        .filter(Boolean);
+            .map(el => el.textContent.trim())
+            .filter(Boolean);
 
         // Updated logic for extracting set name
         const firstWordOf = (raw) => {
@@ -1768,24 +1892,24 @@ function modForge() {
       gap: 8px;
     `;
 
-      // Label
-      const label = document.createElement('label');
-      const select = document.createElement('select');
-      const selectId = 'gear-dropdown';
-      label.htmlFor = selectId;
-      label.textContent = 'Forging Sets';
-      label.style.cssText = `
+        // Label
+        const label = document.createElement('label');
+        const select = document.createElement('select');
+        const selectId = 'gear-dropdown';
+        label.htmlFor = selectId;
+        label.textContent = 'Forging Sets';
+        label.style.cssText = `
       color: rgb(255, 255, 255);
       font-size: 16px;
       font-family: inherit;
     `;
 
-      // Dropdown styling
-      select.id = selectId;
-      select.className = 'gear-dropdown';
-      select.title = 'Filter gear by first word';
-      select.setAttribute('aria-label', 'Filter gear');
-      select.style.cssText = `
+        // Dropdown styling
+        select.id = selectId;
+        select.className = 'gear-dropdown';
+        select.title = 'Filter gear by first word';
+        select.setAttribute('aria-label', 'Filter gear');
+        select.style.cssText = `
       padding: 8px 12px;
       background: rgb(51, 51, 51);
       border: 1px solid rgb(51,51,51);
@@ -1798,65 +1922,65 @@ function modForge() {
       box-shadow: rgba(0, 0, 0, 0.6) 0px 6px 18px;
     `;
 
-      // "All gear" option
-      const allOption = document.createElement('option');
-      allOption.value = '';
-      allOption.textContent = 'All gear';
-      select.appendChild(allOption);
+        // "All gear" option
+        const allOption = document.createElement('option');
+        allOption.value = '';
+        allOption.textContent = 'All gear';
+        select.appendChild(allOption);
 
-      // Add options with rules applied
-      for (const val of Array.from(setGear).sort((a, b) => a.localeCompare(b))) {
-          const opt = document.createElement('option');
-          opt.value = val;
+        // Add options with rules applied
+        for (const val of Array.from(setGear).sort((a, b) => a.localeCompare(b))) {
+            const opt = document.createElement('option');
+            opt.value = val;
 
-          // Apply naming rules
-          if (val === 'Ring of the Eternal Harvest') {
-              opt.textContent = val; // keep full name, no "set"
-          } else {
-              opt.textContent = `${val} set`; // add "set"
-          }
+            // Apply naming rules
+            if (val === 'Ring of the Eternal Harvest') {
+                opt.textContent = val; // keep full name, no "set"
+            } else {
+                opt.textContent = `${val} set`; // add "set"
+            }
 
-          select.appendChild(opt);
-      }
+            select.appendChild(opt);
+        }
 
-      group.appendChild(label);
-      group.appendChild(select);
-      topbar.insertBefore(group, topbar.children[1] || null);
+        group.appendChild(label);
+        group.appendChild(select);
+        topbar.insertBefore(group, topbar.children[1] || null);
 
-      // ---- Filtering behavior ----
-      const cards = Array.from(recipeGrid.querySelectorAll('.cardWrap'));
+        // ---- Filtering behavior ----
+        const cards = Array.from(recipeGrid.querySelectorAll('.cardWrap'));
 
-      const applyFilter = (value) => {
-          cards.forEach(card => {
-              const nameEl = card.querySelector('.name');
-              const name = nameEl ? nameEl.textContent.trim() : '';
-              const shouldShow = !value || new RegExp(`\\b${value}\\b`, 'i').test(name);
-              card.style.display = shouldShow ? '' : 'none';
-          });
-      };
+        const applyFilter = (value) => {
+            cards.forEach(card => {
+                const nameEl = card.querySelector('.name');
+                const name = nameEl ? nameEl.textContent.trim() : '';
+                const shouldShow = !value || new RegExp(`\\b${value}\\b`, 'i').test(name);
+                card.style.display = shouldShow ? '' : 'none';
+            });
+        };
 
-      select.addEventListener('change', () => {
-          let filterValue = select.value;
+        select.addEventListener('change', () => {
+            let filterValue = select.value;
 
 
-          applyFilter(filterValue);
-      });
+            applyFilter(filterValue);
+        });
 
-      applyFilter('');
-  }
+        applyFilter('');
+    }
 };
 
 //monstercards and loot section
 
-function modMonsterCards(){
+function modMonsterCards() {
     const cards = document.querySelectorAll('.monster-card[data-dead="1"][data-monster-id]');
 
     // Robust numeric parser (handles commas, spaces, decimal comma, zero-width, units)
     const parseNumeric = (t) => {
         if (t == null) return NaN;
         const normalized = String(t)
-        .replace(/[\u00A0\u2007\u202F]/g, ' ')
-        .replace(/[\u200B-\u200D\uFEFF]/g, '');
+            .replace(/[\u00A0\u2007\u202F]/g, ' ')
+            .replace(/[\u200B-\u200D\uFEFF]/g, '');
         const m = normalized.match(/[-+]?\d[\d.,]*(?:[eE][-+]?\d+)?/);
         if (!m) return NaN;
         let token = m[0].trim();
@@ -1882,9 +2006,9 @@ function modMonsterCards(){
 
     // Helper: normalize label text
     const norm = (s) => (s || '')
-    .replace(/[\u00A0\u2007\u202F]/g, ' ')
-    .trim()
-    .toLowerCase();
+        .replace(/[\u00A0\u2007\u202F]/g, ' ')
+        .trim()
+        .toLowerCase();
 
     // --- Read level from local DOM (NO FETCH) ---
     const lvlText = document.querySelector('.gtb-level')?.textContent || ''; // e.g., "LV 1054"
@@ -1941,9 +2065,9 @@ function modMonsterCards(){
             const expPerDmgVal = parseNumeric(expPerDmgText);
 
             // 3) Base EXP gained
-            const expGainedRaw = (Number.isFinite(damageVal) && Number.isFinite(expPerDmgVal))
-            ? (damageVal * expPerDmgVal)
-            : NaN;
+            const expGainedRaw = (Number.isFinite(damageVal) && Number.isFinite(expPerDmgVal)) ?
+                (damageVal * expPerDmgVal) :
+                NaN;
 
             // 4) Conditional adjustment based on URL wave and level from .gtb-level (NO fetch for level)
             const href = window.location.href;
@@ -1987,246 +2111,260 @@ function modMonsterCards(){
             <div class="stat-label">EXP /DMG</div>
             <div class="stat-value">${valueToShow || '—'}</div>
           `;
-        }
-      }
-
-        // C) Third .stat-main (Players Joined row) → "EXP Gained" with conditional adjustment and ceil
-        const joinedRow = statRows[2];
-        if (joinedRow) {
-            const labelEl = joinedRow.querySelector('.stat-label');
-            const valueEl = joinedRow.querySelector('.stat-value');
-            if (labelEl) labelEl.textContent = 'EXP Gained';
-            if (valueEl) {
-                const showExp = Number.isFinite(finalExpCeil) ? formatInt(finalExpCeil) : '—';
-                // Keep chip styling if you prefer:
-                // valueEl.innerHTML = `<span class="mini-chip party-chip">${showExp}</span>`;
-                valueEl.textContent = showExp;
+                }
             }
-        }
 
-    } catch (err) {
-        console.error('Failed to update monster card', { mId, err });
-    }
-  });
+            // C) Third .stat-main (Players Joined row) → "EXP Gained" with conditional adjustment and ceil
+            const joinedRow = statRows[2];
+            if (joinedRow) {
+                const labelEl = joinedRow.querySelector('.stat-label');
+                const valueEl = joinedRow.querySelector('.stat-value');
+                if (labelEl) labelEl.textContent = 'EXP Gained';
+                if (valueEl) {
+                    const showExp = Number.isFinite(finalExpCeil) ? formatInt(finalExpCeil) : '—';
+                    // Keep chip styling if you prefer:
+                    // valueEl.innerHTML = `<span class="mini-chip party-chip">${showExp}</span>`;
+                    valueEl.textContent = showExp;
+                }
+            }
+
+        } catch (err) {
+            console.error('Failed to update monster card', {
+                mId,
+                err
+            });
+        }
+    });
 }
 
 ////insta join via picture click
-(function () {
-  'use strict';
+(function() {
+    'use strict';
 
-  const JOIN_ENDPOINT = '/user_join_battle.php';
+    const JOIN_ENDPOINT = '/user_join_battle.php';
 
-  // ----------------------------
-  // Helpers
-  // ----------------------------
-  function getMonsterIdFromCard(card) {
-    return card.getAttribute('data-monster-id') || card.dataset.monsterId || null;
-  }
-
-  function removeSelectSpan(card) {
-    const span = card.querySelector('label.pickWrap span');
-    if (span) span.remove(); // or: span.textContent = '';
-  }
-
-  function isMobAlreadyJoined(card) {
-    if (card?.dataset?.joined !== undefined) return card.dataset.joined === "1";
-    try {
-      for (const pill of card.querySelectorAll(".pill")) {
-        const text = (pill.textContent || "").trim().toLowerCase();
-        if (text === "joined") return true;
-      }
-      for (const el of card.querySelectorAll("a, button")) {
-        const txt = (el.textContent || "").trim();
-        if (/continue\s+the\s+battle|\bcontinue\b|\bjoined\b/i.test(txt)) return true;
-      }
-    } catch {}
-    return false;
-  }
-
-  /**
-   * Try hard to find the logged-in user's ID on the page.
-   * Add/adjust selectors here if your site stores it somewhere specific.
-   */
-  function getUserId() {
-    // 1) Common globals
-    try {
-      const uw = (typeof unsafeWindow !== "undefined") ? unsafeWindow : window;
-
-      // common names
-      const candidates = [
-        uw.user_id, uw.userId, uw.userid,
-        window.user_id, window.userId, window.userid
-      ].filter(v => v !== undefined && v !== null);
-
-      for (const v of candidates) {
-        const n = String(v).trim();
-        if (/^\d+$/.test(n)) return n;
-      }
-    } catch {}
-
-    // 2) Common DOM locations (hidden inputs, data attributes)
-    const selectors = [
-      'input[name="user_id"]',
-      'input#user_id',
-      '[data-user-id]',
-      'meta[name="user_id"]',
-      'meta[name="user-id"]'
-    ];
-
-    for (const sel of selectors) {
-      const el = document.querySelector(sel);
-      if (!el) continue;
-
-      let val = null;
-      if (el.tagName === 'META') val = el.getAttribute('content');
-      else if (el instanceof HTMLInputElement) val = el.value;
-      else val = el.getAttribute('data-user-id');
-
-      val = (val || '').trim();
-      if (/^\d+$/.test(val)) return val;
+    // ----------------------------
+    // Helpers
+    // ----------------------------
+    function getMonsterIdFromCard(card) {
+        return card.getAttribute('data-monster-id') || card.dataset.monsterId || null;
     }
 
-    // 3) As a last resort, try to pull from page text (optional, conservative)
-    // If your page exposes it in JS like: "user_id = 12345"
-    try {
-      const html = document.documentElement.innerHTML;
-      const m = html.match(/\buser_id\b\s*[:=]\s*["']?(\d{1,20})["']?/i);
-      if (m && m[1]) return m[1];
-    } catch {}
+    function removeSelectSpan(card) {
+        const span = card.querySelector('label.pickWrap span');
+        if (span) span.remove(); // or: span.textContent = '';
+    }
 
-    return null;
-  }
+    function isMobAlreadyJoined(card) {
+        if (card?.dataset?.joined !== undefined) return card.dataset.joined === "1";
+        try {
+            for (const pill of card.querySelectorAll(".pill")) {
+                const text = (pill.textContent || "").trim().toLowerCase();
+                if (text === "joined") return true;
+            }
+            for (const el of card.querySelectorAll("a, button")) {
+                const txt = (el.textContent || "").trim();
+                if (/continue\s+the\s+battle|\bcontinue\b|\bjoined\b/i.test(txt)) return true;
+            }
+        } catch {}
+        return false;
+    }
 
-  async function postJoin(monsterId, userId) {
-    const body = new URLSearchParams();
-    body.set('monster_id', String(monsterId));
-    body.set('user_id', String(userId));
+    /**
+     * Try hard to find the logged-in user's ID on the page.
+     * Add/adjust selectors here if your site stores it somewhere specific.
+     */
+    function getUserId() {
+        // 1) Common globals
+        try {
+            const uw = (typeof unsafeWindow !== "undefined") ? unsafeWindow : window;
 
-    const res = await fetch(JOIN_ENDPOINT, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: body.toString()
-    });
+            // common names
+            const candidates = [
+                uw.user_id, uw.userId, uw.userid,
+                window.user_id, window.userId, window.userid
+            ].filter(v => v !== undefined && v !== null);
 
-    const raw = await res.text();
+            for (const v of candidates) {
+                const n = String(v).trim();
+                if (/^\d+$/.test(n)) return n;
+            }
+        } catch {}
 
-    // Try JSON parse
-    let json = null;
-    try { json = JSON.parse(raw); } catch {}
+        // 2) Common DOM locations (hidden inputs, data attributes)
+        const selectors = [
+            'input[name="user_id"]',
+            'input#user_id',
+            '[data-user-id]',
+            'meta[name="user_id"]',
+            'meta[name="user-id"]'
+        ];
 
-    // Determine success
-    const t = (raw || '').toLowerCase();
-    const okByJson =
-      json && (json.success === true || json.status === "success" || json.ok === true);
+        for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (!el) continue;
 
-    const alreadyByJson =
-      json && (json.already === true || json.already_joined === true);
+            let val = null;
+            if (el.tagName === 'META') val = el.getAttribute('content');
+            else if (el instanceof HTMLInputElement) val = el.value;
+            else val = el.getAttribute('data-user-id');
 
-    const okByText =
-      t.includes('success') ||
-      t.includes('successfully') ||
-      t.includes('you have joined') ||
-      (t.includes('joined') && !t.includes('not joined'));
-
-    const alreadyByText =
-      t.includes('already') && (t.includes('joined') || t.includes('in battle') || t.includes('in the battle'));
-
-    const invalidByText =
-      t.includes('invalid') || t.includes('error') || t.includes('failed');
-
-    const ok = res.ok && (okByJson || okByText || alreadyByJson || alreadyByText) && !invalidByText;
-    const already = alreadyByJson || alreadyByText;
-
-    return { ok, already, raw, json, status: res.status };
-  }
-
-  function bindImage(card) {
-    const img = card.querySelector('img.monster-img');
-    if (!img || img.dataset.tmBound) return;
-
-    const monsterId = getMonsterIdFromCard(card);
-    if (!monsterId) return;
-
-    img.dataset.tmBound = '1';
-    img.style.cursor = 'pointer';
-    img.title = 'Click to join';
-
-    img.addEventListener('click', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      // If already joined, just go to battle page
-      if (isMobAlreadyJoined(card)) {
-        location.assign(`battle.php?id=${encodeURIComponent(monsterId)}`);
-        return;
-      }
-
-      // Optional: skip dead monsters if your markup uses data-dead="1"
-      if (card.dataset?.dead === "1") return;
-
-      const userId = getUserId();
-      if (!userId) {
-        alert("Could not find user_id on this page. Tell me where it appears (global var, hidden input, meta tag, etc.) and I’ll hook it.");
-        return;
-      }
-
-      const prevOpacity = img.style.opacity;
-      img.style.opacity = '0.6';
-
-      try {
-        const result = await postJoin(monsterId, userId);
-
-        if (!result.ok) {
-          console.log('[TM join failed]', result);
-          alert('Join failed (server rejected). Check console for response.');
-          img.style.opacity = prevOpacity;
-          return;
+            val = (val || '').trim();
+            if (/^\d+$/.test(val)) return val;
         }
 
-        // Join OK (or already joined) -> go to battle page
-        location.assign(`battle.php?id=${encodeURIComponent(monsterId)}`);
-      } catch (err) {
-        console.error('[TM join error]', err);
-        img.style.opacity = prevOpacity;
-        alert('Join request errored. See console.');
-      }
-    });
-  }
+        // 3) As a last resort, try to pull from page text (optional, conservative)
+        // If your page exposes it in JS like: "user_id = 12345"
+        try {
+            const html = document.documentElement.innerHTML;
+            const m = html.match(/\buser_id\b\s*[:=]\s*["']?(\d{1,20})["']?/i);
+            if (m && m[1]) return m[1];
+        } catch {}
 
-  function processCard(card) {
-    removeSelectSpan(card);
-    bindImage(card);
-  }
-
-  // Process current cards
-  document.querySelectorAll('.monster-card').forEach(processCard);
-
-  // Process dynamically added cards
-  const obs = new MutationObserver((mutations) => {
-    for (const m of mutations) {
-      for (const node of m.addedNodes) {
-        if (!(node instanceof Element)) continue;
-        if (node.matches('.monster-card')) processCard(node);
-        node.querySelectorAll?.('.monster-card')?.forEach(processCard);
-      }
+        return null;
     }
-  });
 
-  obs.observe(document.documentElement, { childList: true, subtree: true });
+    async function postJoin(monsterId, userId) {
+        const body = new URLSearchParams();
+        body.set('monster_id', String(monsterId));
+        body.set('user_id', String(userId));
+
+        const res = await fetch(JOIN_ENDPOINT, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: body.toString()
+        });
+
+        const raw = await res.text();
+
+        // Try JSON parse
+        let json = null;
+        try {
+            json = JSON.parse(raw);
+        } catch {}
+
+        // Determine success
+        const t = (raw || '').toLowerCase();
+        const okByJson =
+            json && (json.success === true || json.status === "success" || json.ok === true);
+
+        const alreadyByJson =
+            json && (json.already === true || json.already_joined === true);
+
+        const okByText =
+            t.includes('success') ||
+            t.includes('successfully') ||
+            t.includes('you have joined') ||
+            (t.includes('joined') && !t.includes('not joined'));
+
+        const alreadyByText =
+            t.includes('already') && (t.includes('joined') || t.includes('in battle') || t.includes('in the battle'));
+
+        const invalidByText =
+            t.includes('invalid') || t.includes('error') || t.includes('failed');
+
+        const ok = res.ok && (okByJson || okByText || alreadyByJson || alreadyByText) && !invalidByText;
+        const already = alreadyByJson || alreadyByText;
+
+        return {
+            ok,
+            already,
+            raw,
+            json,
+            status: res.status
+        };
+    }
+
+    function bindImage(card) {
+        const img = card.querySelector('img.monster-img');
+        if (!img || img.dataset.tmBound) return;
+
+        const monsterId = getMonsterIdFromCard(card);
+        if (!monsterId) return;
+
+        img.dataset.tmBound = '1';
+        img.style.cursor = 'pointer';
+        img.title = 'Click to join';
+
+        img.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // If already joined, just go to battle page
+            if (isMobAlreadyJoined(card)) {
+                location.assign(`battle.php?id=${encodeURIComponent(monsterId)}`);
+                return;
+            }
+
+            // Optional: skip dead monsters if your markup uses data-dead="1"
+            if (card.dataset?.dead === "1") return;
+
+            const userId = getUserId();
+            if (!userId) {
+                alert("Could not find user_id on this page. Tell me where it appears (global var, hidden input, meta tag, etc.) and I’ll hook it.");
+                return;
+            }
+
+            const prevOpacity = img.style.opacity;
+            img.style.opacity = '0.6';
+
+            try {
+                const result = await postJoin(monsterId, userId);
+
+                if (!result.ok) {
+                    console.log('[TM join failed]', result);
+                    alert('Join failed (server rejected). Check console for response.');
+                    img.style.opacity = prevOpacity;
+                    return;
+                }
+
+                // Join OK (or already joined) -> go to battle page
+                location.assign(`battle.php?id=${encodeURIComponent(monsterId)}`);
+            } catch (err) {
+                console.error('[TM join error]', err);
+                img.style.opacity = prevOpacity;
+                alert('Join request errored. See console.');
+            }
+        });
+    }
+
+    function processCard(card) {
+        removeSelectSpan(card);
+        bindImage(card);
+    }
+
+    // Process current cards
+    document.querySelectorAll('.monster-card').forEach(processCard);
+
+    // Process dynamically added cards
+    const obs = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+            for (const node of m.addedNodes) {
+                if (!(node instanceof Element)) continue;
+                if (node.matches('.monster-card')) processCard(node);
+                node.querySelectorAll?.('.monster-card')?.forEach(processCard);
+            }
+        }
+    });
+
+    obs.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+    });
 })();
 
 ////reduce cards size
-(function () {
+(function() {
     if (!vv.isOn('reduce_cards')) return;
-  'use strict';
+    'use strict';
 
-  if (!location.pathname.includes('/active_wave.php')) return;
+    if (!location.pathname.includes('/active_wave.php')) return;
 
-      const style = document.createElement('style');
+    const style = document.createElement('style');
     style.textContent = `
     .monster-card{width:150px;}
     h3{margin:0;}
@@ -2253,43 +2391,46 @@ function modMonsterCards(){
   `;
     document.head.appendChild(style);
 
-function addCollapseButtons() {
-  document.querySelectorAll('.monster-stats:not([data-collapse-ready])')
-    .forEach(stats => {
-      const card = stats.closest('.monster-card');
+    function addCollapseButtons() {
+        document.querySelectorAll('.monster-stats:not([data-collapse-ready])')
+            .forEach(stats => {
+                const card = stats.closest('.monster-card');
 
-      // 🚫 Skip dead monsters
-      if (card && card.dataset.dead === '1') return;
+                // 🚫 Skip dead monsters
+                if (card && card.dataset.dead === '1') return;
 
-      stats.setAttribute('data-collapse-ready', '1');
-      stats.classList.add('collapsed');
+                stats.setAttribute('data-collapse-ready', '1');
+                stats.classList.add('collapsed');
 
-      const btn = document.createElement('button');
-      btn.className = 'toggle-stats';
-      btn.type = 'button';
-      btn.textContent = '▶ Stats';
+                const btn = document.createElement('button');
+                btn.className = 'toggle-stats';
+                btn.type = 'button';
+                btn.textContent = '▶ Stats';
 
-      stats.prepend(btn);
-    });
-}
+                stats.prepend(btn);
+            });
+    }
 
 
     document.addEventListener('click', e => {
-    const btn = e.target.closest('.toggle-stats');
-    if (!btn) return;
+        const btn = e.target.closest('.toggle-stats');
+        if (!btn) return;
 
-    const stats = btn.closest('.monster-stats');
-    stats.classList.toggle('collapsed');
+        const stats = btn.closest('.monster-stats');
+        stats.classList.toggle('collapsed');
 
-    btn.textContent = stats.classList.contains('collapsed')
-      ? '▶ Stats'
-      : '▼ Stats';
-  });
+        btn.textContent = stats.classList.contains('collapsed') ?
+            '▶ Stats' :
+            '▼ Stats';
+    });
 
-  const observer = new MutationObserver(addCollapseButtons);
-  observer.observe(document.body, { childList: true, subtree: true });
+    const observer = new MutationObserver(addCollapseButtons);
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
 
-  addCollapseButtons();
+    addCollapseButtons();
 })();
 
 ////autoloot
@@ -2299,32 +2440,32 @@ const LOOT_PLAN_EXCLUDE_TAGS = new Set([
     'drakzareth',
     'oceanus',
     'poseidon',
-    ]);
+]);
 
 function isElementDisplayNone(el) {
-  // Walk up the DOM tree; if any ancestor is display:none, it's effectively hidden
-  for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
-    const style = window.getComputedStyle(node);
-    if (style.display === 'none') return true;
-  }
-  return false;
+    // Walk up the DOM tree; if any ancestor is display:none, it's effectively hidden
+    for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
+        const style = window.getComputedStyle(node);
+        if (style.display === 'none') return true;
+    }
+    return false;
 }
 
 function isExcludedFromLootPlan(card) {
-  if (!card) return false;
+    if (!card) return false;
 
-  // NEW: exclude hidden cards (display:none)
-  if (isElementDisplayNone(card)) return true;
+    // NEW: exclude hidden cards (display:none)
+    if (isElementDisplayNone(card)) return true;
 
-  const rawName = card.dataset.name;
-  if (!rawName) return false;
+    const rawName = card.dataset.name;
+    if (!rawName) return false;
 
-  const name = rawName.toLowerCase();
+    const name = rawName.toLowerCase();
 
-  for (const tag of LOOT_PLAN_EXCLUDE_TAGS) {
-    if (name.includes(tag)) return true;
-  }
-  return false;
+    for (const tag of LOOT_PLAN_EXCLUDE_TAGS) {
+        if (name.includes(tag)) return true;
+    }
+    return false;
 }
 
 /* =========================================================
@@ -2344,71 +2485,74 @@ function isExcludedFromLootPlan(card) {
    ========================================================= */
 (function LOOT_SUMMARY_MODULE() {
     if (!vv.isOn('loot_summary')) return;
-  'use strict';
-if (window.__VV_LOOT_LOADED__) { console.warn("VV_LOOT loaded twice"); return; }
-window.__VV_LOOT_LOADED__ = true;
+    'use strict';
+    if (window.__VV_LOOT_LOADED__) {
+        console.warn("VV_LOOT loaded twice");
+        return;
+    }
+    window.__VV_LOOT_LOADED__ = true;
 
-  // Tier colors (same idea as your bot)
-  const ITEM_TIER_COLORS = {
-    COMMON: '#7f8c8d',
-    UNCOMMON: '#2ecc71',
-    RARE: '#9b59b6',
-    EPIC: '#e67e22',
-    LEGENDARY: '#f1c40f'
-  };
-  const DEFAULT_TIER_COLOR = "#ffffff";
+    // Tier colors (same idea as your bot)
+    const ITEM_TIER_COLORS = {
+        COMMON: '#7f8c8d',
+        UNCOMMON: '#2ecc71',
+        RARE: '#9b59b6',
+        EPIC: '#e67e22',
+        LEGENDARY: '#f1c40f'
+    };
+    const DEFAULT_TIER_COLOR = "#ffffff";
 
-  // Global-ish state so EXP plan module can call it
-  window.VV_LOOT = window.VV_LOOT || {};
+    // Global-ish state so EXP plan module can call it
+    window.VV_LOOT = window.VV_LOOT || {};
 
-  const gdLootSummary = {
-    items: {}, // ITEM_ID -> { name, image, tier, count }
-    exp: 0,
-    gold: 0,
-    mobs: 0,
-    zeroMobs: 0,
-    failed: 0
-  };
+    const gdLootSummary = {
+        items: {}, // ITEM_ID -> { name, image, tier, count }
+        exp: 0,
+        gold: 0,
+        mobs: 0,
+        zeroMobs: 0,
+        failed: 0
+    };
 
 
     function addLootItem(item) {
-  const id = String(item.ITEM_ID ?? '').trim();
-  if (!id) return;
+        const id = String(item.ITEM_ID ?? '').trim();
+        if (!id) return;
 
-  if (!gdLootSummary.items[id]) {
-    gdLootSummary.items[id] = {
-      name: item.NAME,
-      image: item.IMAGE_URL,
-      tier: item.TIER,
-      count: 0
-    };
-  }
+        if (!gdLootSummary.items[id]) {
+            gdLootSummary.items[id] = {
+                name: item.NAME,
+                image: item.IMAGE_URL,
+                tier: item.TIER,
+                count: 0
+            };
+        }
 
-  // ✅ always increment (whether it was new or existing)
-  gdLootSummary.items[id].count += 1;
-}
+        // ✅ always increment (whether it was new or existing)
+        gdLootSummary.items[id].count += 1;
+    }
 
     function resetLootSummary() {
-    gdLootSummary.items = {};
-    gdLootSummary.exp = 0;
-    gdLootSummary.gold = 0;
-    gdLootSummary.mobs = 0;
-    gdLootSummary.zeroMobs = 0;
-    gdLootSummary.failed = 0;
-  }
+        gdLootSummary.items = {};
+        gdLootSummary.exp = 0;
+        gdLootSummary.gold = 0;
+        gdLootSummary.mobs = 0;
+        gdLootSummary.zeroMobs = 0;
+        gdLootSummary.failed = 0;
+    }
 
-  function showLootSummaryModal() {
-    document.getElementById('vv-loot-modal')?.remove();
+    function showLootSummaryModal() {
+        document.getElementById('vv-loot-modal')?.remove();
 
-    const modal = document.createElement('div');
-    modal.id = 'vv-loot-modal';
-    modal.style.cssText = `
+        const modal = document.createElement('div');
+        modal.id = 'vv-loot-modal';
+        modal.style.cssText = `
       position:fixed;inset:0;background:rgba(0,0,0,0.6);
       z-index:100000;display:flex;align-items:center;justify-content:center;
     `;
 
-    const box = document.createElement('div');
-    box.style.cssText = `
+        const box = document.createElement('div');
+        box.style.cssText = `
       background:#2a2a3d;border-radius:12px;padding:20px;
       max-width:92%;width:440px;text-align:center;color:white;
       overflow-y:auto;overflow-x:hidden;max-height:82%;
@@ -2416,7 +2560,7 @@ window.__VV_LOOT_LOADED__ = true;
       font-family:Arial,sans-serif;
     `;
 
-    box.innerHTML = `
+        box.innerHTML = `
       <h2 style="margin:0 0 12px 0;">🎁 Loot Gained</h2>
 
       <div id="vv-loot-progress" style="font-size:12px;color:#c7c7d8;margin-bottom:10px;">
@@ -2444,28 +2588,28 @@ window.__VV_LOOT_LOADED__ = true;
       </button>
     `;
 
-    modal.appendChild(box);
-    document.body.appendChild(modal);
+        modal.appendChild(box);
+        document.body.appendChild(modal);
 
-    document.getElementById('vv-loot-close').onclick = () => modal.remove();
-  }
+        document.getElementById('vv-loot-close').onclick = () => modal.remove();
+    }
 
     function upsertItemSlot(itemsWrap, item) {
-  const itemId = String(item.ITEM_ID ?? "").trim();
-  if (!itemId) return;
+        const itemId = String(item.ITEM_ID ?? "").trim();
+        if (!itemId) return;
 
-  const rec = gdLootSummary.items[itemId];
-  const currentCount = rec?.count ?? 0;
-  const color = ITEM_TIER_COLORS[item.TIER] || DEFAULT_TIER_COLOR;
+        const rec = gdLootSummary.items[itemId];
+        const currentCount = rec?.count ?? 0;
+        const color = ITEM_TIER_COLORS[item.TIER] || DEFAULT_TIER_COLOR;
 
-  // Find existing slot
-  let slot = itemsWrap.querySelector(`[data-item-id="${CSS.escape(itemId)}"]`);
+        // Find existing slot
+        let slot = itemsWrap.querySelector(`[data-item-id="${CSS.escape(itemId)}"]`);
 
-  // Create slot if missing
-  if (!slot) {
-    slot = document.createElement("div");
-    slot.dataset.itemId = itemId;
-    slot.style.cssText = `
+        // Create slot if missing
+        if (!slot) {
+            slot = document.createElement("div");
+            slot.dataset.itemId = itemId;
+            slot.style.cssText = `
       width:96px;
       display:flex;
       flex-direction:column;
@@ -2475,23 +2619,23 @@ window.__VV_LOOT_LOADED__ = true;
       box-sizing:border-box;
     `;
 
-    // Wrapper for image + badge
-    const imgWrap = document.createElement("div");
-    imgWrap.style.cssText = "position:relative;width:64px;height:64px;";
+            // Wrapper for image + badge
+            const imgWrap = document.createElement("div");
+            imgWrap.style.cssText = "position:relative;width:64px;height:64px;";
 
-    const img = document.createElement("img");
-    img.src = item.IMAGE_URL;
-    img.alt = item.NAME || "";
-    img.style.cssText = `
+            const img = document.createElement("img");
+            img.src = item.IMAGE_URL;
+            img.alt = item.NAME || "";
+            img.style.cssText = `
       width:64px;height:64px;border-radius:4px;
       border:2px solid ${color};
       display:block;
     `;
 
-    const badge = document.createElement("span");
-    badge.className = "vv-item-count";
-    badge.textContent = `x${currentCount}`;
-    badge.style.cssText = `
+            const badge = document.createElement("span");
+            badge.className = "vv-item-count";
+            badge.textContent = `x${currentCount}`;
+            badge.style.cssText = `
       position:absolute;
       right:-6px;
       bottom:-6px;
@@ -2504,181 +2648,213 @@ window.__VV_LOOT_LOADED__ = true;
       line-height:1.2;
     `;
 
-    imgWrap.appendChild(img);
-    imgWrap.appendChild(badge);
+            imgWrap.appendChild(img);
+            imgWrap.appendChild(badge);
 
-    // Text block
-    const textWrap = document.createElement("div");
-    textWrap.style.cssText = "margin-top:6px;width:100%;line-height:1.1;";
+            // Text block
+            const textWrap = document.createElement("div");
+            textWrap.style.cssText = "margin-top:6px;width:100%;line-height:1.1;";
 
-    const nameDiv = document.createElement("div");
-    nameDiv.textContent = item.NAME || "Unknown";
-    nameDiv.style.cssText = `
+            const nameDiv = document.createElement("div");
+            nameDiv.textContent = item.NAME || "Unknown";
+            nameDiv.style.cssText = `
       font-size:13px;font-weight:bold;color:white;
       overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     `;
 
-    const tierDiv = document.createElement("div");
-    tierDiv.textContent = item.TIER || "";
-    tierDiv.style.cssText = `
+            const tierDiv = document.createElement("div");
+            tierDiv.textContent = item.TIER || "";
+            tierDiv.style.cssText = `
       font-size:10px;font-weight:bold;
       color:${color};
       margin-top:2px;
     `;
 
-    textWrap.appendChild(nameDiv);
-    textWrap.appendChild(tierDiv);
+            textWrap.appendChild(nameDiv);
+            textWrap.appendChild(tierDiv);
 
-    slot.appendChild(imgWrap);
-    slot.appendChild(textWrap);
+            slot.appendChild(imgWrap);
+            slot.appendChild(textWrap);
 
-    itemsWrap.appendChild(slot);
-    return;
-  }
+            itemsWrap.appendChild(slot);
+            return;
+        }
 
-  // Update existing slot
-  const countEl = slot.querySelector(".vv-item-count");
-  if (countEl) countEl.textContent = `x${currentCount}`;
+        // Update existing slot
+        const countEl = slot.querySelector(".vv-item-count");
+        if (countEl) countEl.textContent = `x${currentCount}`;
 
-  const img = slot.querySelector("img");
-  if (img) img.style.borderColor = color;
-}
+        const img = slot.querySelector("img");
+        if (img) img.style.borderColor = color;
+    }
 
 
     async function postLootRequest(monster_id) {
-    try {
-      const res = await fetch("loot.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "monster_id=" + encodeURIComponent(monster_id),
-        credentials: "include"
-      });
+        try {
+            const res = await fetch("loot.php", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded"
+                },
+                body: "monster_id=" + encodeURIComponent(monster_id),
+                credentials: "include"
+            });
 
-      const raw = await res.text();
+            const raw = await res.text();
 
-      if (res.status === 403) {
-        // Captcha / forbidden type page
-        return { ok: false, already: false, raw, data: null, status: 403 };
-      }
+            if (res.status === 403) {
+                // Captcha / forbidden type page
+                return {
+                    ok: false,
+                    already: false,
+                    raw,
+                    data: null,
+                    status: 403
+                };
+            }
 
-      let data = null;
-      try { data = JSON.parse(raw); } catch {}
+            let data = null;
+            try {
+                data = JSON.parse(raw);
+            } catch {}
 
-      const ok = (data?.status === "success") || /success|looted|claimed/i.test(raw);
-      const already = /already\s+claimed/i.test(raw);
+            const ok = (data?.status === "success") || /success|looted|claimed/i.test(raw);
+            const already = /already\s+claimed/i.test(raw);
 
-      return { ok, already, raw, data, status: res.status };
-    } catch (err) {
-      console.error("Loot request failed:", monster_id, err);
-      return { ok: false, already: false, raw: "", data: null, status: 0 };
+            return {
+                ok,
+                already,
+                raw,
+                data,
+                status: res.status
+            };
+        } catch (err) {
+            console.error("Loot request failed:", monster_id, err);
+            return {
+                ok: false,
+                already: false,
+                raw: "",
+                data: null,
+                status: 0
+            };
+        }
     }
-  }
 
-  function parseExpFromRaw(raw) {
-    // Matches "... 12,345 EXP" in plaintext responses
-    const m = raw.match(/([0-9][0-9,\.]*)\s*EXP/i);
-    return m ? Number(m[1].replace(/[^0-9]/g, "")) : 0;
-  }
+    function parseExpFromRaw(raw) {
+        // Matches "... 12,345 EXP" in plaintext responses
+        const m = raw.match(/([0-9][0-9,\.]*)\s*EXP/i);
+        return m ? Number(m[1].replace(/[^0-9]/g, "")) : 0;
+    }
 
-  // Main public API: loot a list of monster IDs
-  async function lootMonsterIds(monsterIds, opts = {}) {
-    const {
-      concurrency = 5,
-      stopAtExp = null, // number | null
-      perLootDelayMs = 80
-    } = opts;
+    // Main public API: loot a list of monster IDs
+    async function lootMonsterIds(monsterIds, opts = {}) {
+        const {
+            concurrency = 5,
+                stopAtExp = null, // number | null
+                perLootDelayMs = 80
+        } = opts;
 
-    resetLootSummary();
-    showLootSummaryModal();
+        resetLootSummary();
+        showLootSummaryModal();
 
-    const mobsEl = document.getElementById("vv-loot-mobs");
-    const zeroEl = document.getElementById("vv-loot-zero");
-    const expEl  = document.getElementById("vv-loot-exp");
-    const goldEl = document.getElementById("vv-loot-gold");
-    const failEl = document.getElementById("vv-loot-failed");
-    const itemsWrap = document.getElementById("vv-loot-items");
-    const progEl = document.getElementById("vv-loot-progress");
+        const mobsEl = document.getElementById("vv-loot-mobs");
+        const zeroEl = document.getElementById("vv-loot-zero");
+        const expEl = document.getElementById("vv-loot-exp");
+        const goldEl = document.getElementById("vv-loot-gold");
+        const failEl = document.getElementById("vv-loot-failed");
+        const itemsWrap = document.getElementById("vv-loot-items");
+        const progEl = document.getElementById("vv-loot-progress");
 
-    const queue = monsterIds.map(String);
-    let totalLootedAttempts = 0;
+        const queue = monsterIds.map(String);
+        let totalLootedAttempts = 0;
 
-    const updateProgress = () => {
-      if (!progEl) return;
-      progEl.textContent =
-        `Looting... ${totalLootedAttempts} / ${monsterIds.length}` +
-        (stopAtExp ? ` | EXP target: ${Math.min(gdLootSummary.exp, stopAtExp).toLocaleString()} / ${stopAtExp.toLocaleString()}` : "");
-    };
+        const updateProgress = () => {
+            if (!progEl) return;
+            progEl.textContent =
+                `Looting... ${totalLootedAttempts} / ${monsterIds.length}` +
+                (stopAtExp ? ` | EXP target: ${Math.min(gdLootSummary.exp, stopAtExp).toLocaleString()} / ${stopAtExp.toLocaleString()}` : "");
+        };
 
-    updateProgress();
-
-    async function worker() {
-      while (queue.length) {
-        if (stopAtExp && gdLootSummary.exp >= stopAtExp) return;
-
-        const id = queue.shift();
-        if (!id) return;
-
-        totalLootedAttempts++;
         updateProgress();
 
-        const { ok, already, raw, data, status } = await postLootRequest(id);
+        async function worker() {
+            while (queue.length) {
+                if (stopAtExp && gdLootSummary.exp >= stopAtExp) return;
 
-        if (status === 403) {
-          // Stop hard: captcha/forbidden; continuing just hammers
-          gdLootSummary.failed++;
-          failEl && (failEl.textContent = gdLootSummary.failed.toLocaleString());
-          if (progEl) progEl.textContent = "Stopped: 403 Forbidden (captcha/blocked).";
-          return;
+                const id = queue.shift();
+                if (!id) return;
+
+                totalLootedAttempts++;
+                updateProgress();
+
+                const {
+                    ok,
+                    already,
+                    raw,
+                    data,
+                    status
+                } = await postLootRequest(id);
+
+                if (status === 403) {
+                    // Stop hard: captcha/forbidden; continuing just hammers
+                    gdLootSummary.failed++;
+                    failEl && (failEl.textContent = gdLootSummary.failed.toLocaleString());
+                    if (progEl) progEl.textContent = "Stopped: 403 Forbidden (captcha/blocked).";
+                    return;
+                }
+
+                if (!(ok || already)) {
+                    gdLootSummary.failed++;
+                    failEl && (failEl.textContent = gdLootSummary.failed.toLocaleString());
+                    await new Promise(r => setTimeout(r, perLootDelayMs));
+                    continue;
+                }
+
+                const expGain = parseExpFromRaw(raw);
+                if (expGain > 0) {
+                    gdLootSummary.mobs++;
+                    gdLootSummary.exp += expGain;
+                    mobsEl && (mobsEl.textContent = gdLootSummary.mobs.toLocaleString());
+                    expEl && (expEl.textContent = gdLootSummary.exp.toLocaleString());
+                } else {
+                    gdLootSummary.zeroMobs++;
+                    zeroEl && (zeroEl.textContent = gdLootSummary.zeroMobs.toLocaleString());
+                }
+
+                if (data?.rewards?.gold) {
+                    gdLootSummary.gold += Number(data.rewards.gold) || 0;
+                    goldEl && (goldEl.textContent = gdLootSummary.gold.toLocaleString());
+                }
+
+                if (Array.isArray(data?.items)) {
+                    data.items.forEach(item => {
+                        addLootItem(item);
+                        const rawId = item.ITEM_ID;
+                        const id = String(rawId);
+                        console.log("RAW ID:", rawId, "AS STRING:", JSON.stringify(id), "LEN:", id.length);
+
+                        console.log("ITEM", item.ITEM_ID, item.NAME, "COUNT", gdLootSummary.items[String(item.ITEM_ID).trim()].count);
+                        if (itemsWrap) upsertItemSlot(itemsWrap, item);
+                    });
+                }
+
+                await new Promise(r => setTimeout(r, perLootDelayMs));
+            }
         }
 
-        if (!(ok || already)) {
-          gdLootSummary.failed++;
-          failEl && (failEl.textContent = gdLootSummary.failed.toLocaleString());
-          await new Promise(r => setTimeout(r, perLootDelayMs));
-          continue;
-        }
+        const workers = Array.from({
+            length: Math.max(1, concurrency)
+        }, () => worker());
+        await Promise.all(workers);
 
-        const expGain = parseExpFromRaw(raw);
-        if (expGain > 0) {
-          gdLootSummary.mobs++;
-          gdLootSummary.exp += expGain;
-          mobsEl && (mobsEl.textContent = gdLootSummary.mobs.toLocaleString());
-          expEl  && (expEl.textContent  = gdLootSummary.exp.toLocaleString());
-        } else {
-          gdLootSummary.zeroMobs++;
-          zeroEl && (zeroEl.textContent = gdLootSummary.zeroMobs.toLocaleString());
-        }
-
-        if (data?.rewards?.gold) {
-          gdLootSummary.gold += Number(data.rewards.gold) || 0;
-          goldEl && (goldEl.textContent = gdLootSummary.gold.toLocaleString());
-        }
-
-        if (Array.isArray(data?.items)) {
-          data.items.forEach(item => {
-            addLootItem(item);
-              const rawId = item.ITEM_ID;
-              const id = String(rawId);
-              console.log("RAW ID:", rawId, "AS STRING:", JSON.stringify(id), "LEN:", id.length);
-
-            console.log("ITEM", item.ITEM_ID, item.NAME, "COUNT", gdLootSummary.items[String(item.ITEM_ID).trim()].count);
-            if (itemsWrap) upsertItemSlot(itemsWrap, item);
-          });
-        }
-
-        await new Promise(r => setTimeout(r, perLootDelayMs));
-      }
+        if (progEl) progEl.textContent = "Done.";
+        return {
+            ...gdLootSummary
+        };
     }
 
-    const workers = Array.from({ length: Math.max(1, concurrency) }, () => worker());
-    await Promise.all(workers);
-
-    if (progEl) progEl.textContent = "Done.";
-    return { ...gdLootSummary };
-  }
-
-  // Expose API
-  window.VV_LOOT.lootMonsterIds = lootMonsterIds;
+    // Expose API
+    window.VV_LOOT.lootMonsterIds = lootMonsterIds;
 
 })();
 
@@ -2689,7 +2865,7 @@ window.__VV_LOOT_LOADED__ = true;
     // Global stores (minimal)
     // ----------------------------
     window.monsterExpMap = window.monsterExpMap || new Map(); // Map<monsterId, finalExpCeil|null>
-    window.monsterExpList = window.monsterExpList || [];      // Array<{monsterId, finalExpCeil:number|null}>
+    window.monsterExpList = window.monsterExpList || []; // Array<{monsterId, finalExpCeil:number|null}>
 
     // Namespace for debugging
     window.VV_EXPPLAN = window.VV_EXPPLAN || {};
@@ -2702,14 +2878,14 @@ window.__VV_LOOT_LOADED__ = true;
     const parseNumeric = (t) => {
         if (t == null) return NaN;
         const normalized = String(t)
-        .replace(/[\u00A0\u2007\u202F]/g, ' ')
-        .replace(/[\u200B-\u200D\uFEFF]/g, '');
+            .replace(/[\u00A0\u2007\u202F]/g, ' ')
+            .replace(/[\u200B-\u200D\uFEFF]/g, '');
         const m = normalized.match(/[-+]?\d[\d.,]*(?:[eE][-+]?\d+)?/);
         if (!m) return NaN;
         let token = m[0].trim();
         const hasComma = token.includes(',');
         const hasDot = token.includes('.');
-        if (hasComma && hasDot) token = token.replace(/,/g, '');      // 1,234.56
+        if (hasComma && hasDot) token = token.replace(/,/g, ''); // 1,234.56
         else if (hasComma && !hasDot) {
             const commaCount = (token.match(/,/g) || []).length;
             token = (commaCount === 1) ? token.replace(',', '.') : token.replace(/,/g, '');
@@ -2720,134 +2896,175 @@ window.__VV_LOOT_LOADED__ = true;
     };
 
     const formatInt = (n) =>
-    Number.isFinite(n)
-    ? Math.trunc(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-    : '—';
+        Number.isFinite(n) ?
+        Math.trunc(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') :
+        '—';
 
     const norm = (s) => (s || '')
-    .replace(/[\u00A0\u2007\u202F]/g, ' ')
-    .trim()
-    .toLowerCase();
+        .replace(/[\u00A0\u2007\u202F]/g, ' ')
+        .trim()
+        .toLowerCase();
 
-// === AUTO LEVEL LOOP (persists across refresh) ===================
-const AUTO_KEY = 'vv_auto_level_state';
+    // === AUTO LEVEL LOOP (persists across refresh) ===================
+    const AUTO_KEY = 'vv_auto_level_state';
 
-function loadAutoState() {
-  try { return JSON.parse(localStorage.getItem(AUTO_KEY) || 'null'); } catch { return null; }
-}
-function saveAutoState(s) {
-  localStorage.setItem(AUTO_KEY, JSON.stringify(s));
-}
-function clearAutoState() {
-  localStorage.removeItem(AUTO_KEY);
-}
-
-function isAutoActive() {
-  const s = loadAutoState();
-  return !!(s && s.active);
-}
-
-function setRunButtonState({ running, text }) {
-  const runBtn = document.querySelector('#run-exp-plan-btn');
-  if (!runBtn) return;
-  runBtn.dataset.running = running ? '1' : '0';
-  runBtn.disabled = !!running;
-  if (text) runBtn.textContent = text;
-}
-
-function setStopButtonState({ visible }) {
-  const stopBtn = document.querySelector('#stop-exp-plan-btn');
-  if (!stopBtn) return;
-  stopBtn.style.display = visible ? 'inline-block' : 'none';
-}
-
-async function runAutoCycleOnce() {
-  // Build exp map/list from current visible cards
-  await updateMonsterExpData();
-
-  // Build plan (you can swap to 'desc' if you prefer highest-EXP-first)
-  const plan = buildExpPlan({ strategy: 'asIs' });
-  renderExpPlan(plan);
-
-  // Nothing to loot? Stop the loop gracefully.
-  const ids = plan.selected.map(x => x.monsterId);
-  if (!ids.length) {
-    const panel = document.querySelector('#exp-plan-progress');
-    if (panel) panel.textContent = 'No slain monsters found to loot on this page.';
-    clearAutoState();
-    setRunButtonState({ running: false, text: 'loot to next level' });
-    setStopButtonState({ visible: false });
-    return { leveled: false, nothingToDo: true };
-  }
-
-  const stopAt = Number.isFinite(plan.needed) ? Math.ceil(plan.needed) : null;
-
-  // Loot this batch with stopAtExp to honor the "to next level" promise
-  const summary = await window.VV_LOOT.lootMonsterIds(ids, {
-    concurrency: 5,
-    stopAtExp: stopAt,
-    perLootDelayMs: 90
-  });
-
-  // If we reached or exceeded the needed EXP for this cycle, we’re done.
-  const reached = Number.isFinite(stopAt) && summary.exp >= stopAt;
-
-  return { leveled: reached, summary };
-}
-
-async function startOrContinueAutoLevel() {
-  // Mark auto as active in storage so a refresh resumes.
-  const current = loadAutoState();
-  if (!current || !current.active) {
-    const { needed } = readExpNeededFromTopBar();
-    saveAutoState({
-      active: true,
-      sessionId: Date.now(),
-      goalAtStart: Number.isFinite(needed) ? needed : null,
-      cumulativeExp: 0,
-      lastRun: Date.now()
-    });
-  }
-
-  setRunButtonState({ running: true, text: 'Auto running…' });
-  setStopButtonState({ visible: true });
-
-  try {
-    const one = await runAutoCycleOnce();
-
-    // If no work, stop. If leveled, stop. Otherwise reload to continue.
-    if (one.nothingToDo) {
-      // Do nothing — we already stopped above.
-      return;
+    function loadAutoState() {
+        try {
+            return JSON.parse(localStorage.getItem(AUTO_KEY) || 'null');
+        } catch {
+            return null;
+        }
     }
 
-    const state = loadAutoState();
-    if (state && one.summary && Number.isFinite(one.summary.exp)) {
-      state.cumulativeExp = (state.cumulativeExp || 0) + (one.summary.exp || 0);
-      state.lastRun = Date.now();
-      saveAutoState(state);
+    function saveAutoState(s) {
+        localStorage.setItem(AUTO_KEY, JSON.stringify(s));
     }
 
-    if (one.leveled) {
-      // Reached target — clear and optionally reload to update UI.
-      clearAutoState();
-      setRunButtonState({ running: false, text: 'loot to next level' });
-      setStopButtonState({ visible: false });
-
-      // Small delay so user can read the modal, then refresh UI EXP bar.
-      setTimeout(() => window.location.reload(), 800);
-    } else {
-      // Not enough — keep the session active and refresh to pick up the next 200.
-      setTimeout(() => window.location.reload(), 800);
+    function clearAutoState() {
+        localStorage.removeItem(AUTO_KEY);
     }
-  } catch (err) {
-    console.error('[AutoLevel] Cycle error:', err);
-    // On error, disable loop so it doesn’t hard-refresh endlessly.
-    clearAutoState();
-    setRunButtonState({ running: false, text: 'loot to next level' });
-    setStopButtonState({ visible: false });
-  }
-}
+
+    function isAutoActive() {
+        const s = loadAutoState();
+        return !!(s && s.active);
+    }
+
+    function setRunButtonState({
+        running,
+        text
+    }) {
+        const runBtn = document.querySelector('#run-exp-plan-btn');
+        if (!runBtn) return;
+        runBtn.dataset.running = running ? '1' : '0';
+        runBtn.disabled = !!running;
+        if (text) runBtn.textContent = text;
+    }
+
+    function setStopButtonState({
+        visible
+    }) {
+        const stopBtn = document.querySelector('#stop-exp-plan-btn');
+        if (!stopBtn) return;
+        stopBtn.style.display = visible ? 'inline-block' : 'none';
+    }
+
+    async function runAutoCycleOnce() {
+        // Build exp map/list from current visible cards
+        await updateMonsterExpData();
+
+        // Build plan (you can swap to 'desc' if you prefer highest-EXP-first)
+        const plan = buildExpPlan({
+            strategy: 'asIs'
+        });
+        renderExpPlan(plan);
+
+        // Nothing to loot? Stop the loop gracefully.
+        const ids = plan.selected.map(x => x.monsterId);
+        if (!ids.length) {
+            const panel = document.querySelector('#exp-plan-progress');
+            if (panel) panel.textContent = 'No slain monsters found to loot on this page.';
+            clearAutoState();
+            setRunButtonState({
+                running: false,
+                text: 'loot to next level'
+            });
+            setStopButtonState({
+                visible: false
+            });
+            return {
+                leveled: false,
+                nothingToDo: true
+            };
+        }
+
+        const stopAt = Number.isFinite(plan.needed) ? Math.ceil(plan.needed) : null;
+
+        // Loot this batch with stopAtExp to honor the "to next level" promise
+        const summary = await window.VV_LOOT.lootMonsterIds(ids, {
+            concurrency: 5,
+            stopAtExp: stopAt,
+            perLootDelayMs: 90
+        });
+
+        // If we reached or exceeded the needed EXP for this cycle, we’re done.
+        const reached = Number.isFinite(stopAt) && summary.exp >= stopAt;
+
+        return {
+            leveled: reached,
+            summary
+        };
+    }
+
+    async function startOrContinueAutoLevel() {
+        // Mark auto as active in storage so a refresh resumes.
+        const current = loadAutoState();
+        if (!current || !current.active) {
+            const {
+                needed
+            } = readExpNeededFromTopBar();
+            saveAutoState({
+                active: true,
+                sessionId: Date.now(),
+                goalAtStart: Number.isFinite(needed) ? needed : null,
+                cumulativeExp: 0,
+                lastRun: Date.now()
+            });
+        }
+
+        setRunButtonState({
+            running: true,
+            text: 'Auto running…'
+        });
+        setStopButtonState({
+            visible: true
+        });
+
+        try {
+            const one = await runAutoCycleOnce();
+
+            // If no work, stop. If leveled, stop. Otherwise reload to continue.
+            if (one.nothingToDo) {
+                // Do nothing — we already stopped above.
+                return;
+            }
+
+            const state = loadAutoState();
+            if (state && one.summary && Number.isFinite(one.summary.exp)) {
+                state.cumulativeExp = (state.cumulativeExp || 0) + (one.summary.exp || 0);
+                state.lastRun = Date.now();
+                saveAutoState(state);
+            }
+
+            if (one.leveled) {
+                // Reached target — clear and optionally reload to update UI.
+                clearAutoState();
+                setRunButtonState({
+                    running: false,
+                    text: 'loot to next level'
+                });
+                setStopButtonState({
+                    visible: false
+                });
+
+                // Small delay so user can read the modal, then refresh UI EXP bar.
+                setTimeout(() => window.location.reload(), 3000);
+            } else {
+                // Not enough — keep the session active and refresh to pick up the next 200.
+                setTimeout(() => window.location.reload(), 3000);
+            }
+        } catch (err) {
+            console.error('[AutoLevel] Cycle error:', err);
+            // On error, disable loop so it doesn’t hard-refresh endlessly.
+            clearAutoState();
+            setRunButtonState({
+                running: false,
+                text: 'loot to next level'
+            });
+            setStopButtonState({
+                visible: false
+            });
+        }
+    }
 
     // ----------------------------
     // EXP Needed from top bar
@@ -2861,11 +3078,16 @@ async function startOrContinueAutoLevel() {
 
         const currentExp = parseNumeric(parts[0]);
         const maxExp = parseNumeric(parts[1]);
-        const needed = (Number.isFinite(currentExp) && Number.isFinite(maxExp))
-        ? Math.max(0, maxExp - currentExp)
-        : NaN;
+        const needed = (Number.isFinite(currentExp) && Number.isFinite(maxExp)) ?
+            Math.max(0, maxExp - currentExp) :
+            NaN;
 
-        return { currentExp, maxExp, needed, raw };
+        return {
+            currentExp,
+            maxExp,
+            needed,
+            raw
+        };
     }
 
     // ----------------------------
@@ -2874,7 +3096,10 @@ async function startOrContinueAutoLevel() {
     // ----------------------------
     async function updateMonsterExpData() {
         const cards = document.querySelectorAll('.monster-card[data-dead="1"][data-monster-id]');
-        if (!cards.length) return { ok: true, count: 0 };
+        if (!cards.length) return {
+            ok: true,
+            count: 0
+        };
 
         // Read level from DOM (NO FETCH)
         const lvlText = document.querySelector('.gtb-level')?.textContent || '';
@@ -2886,12 +3111,14 @@ async function startOrContinueAutoLevel() {
             const mId = card.dataset.monsterId;
             if (!mId) return null;
 
-            if(isExcludedFromLootPlan(card)){
+            if (isExcludedFromLootPlan(card)) {
                 return null;
             }
 
             try {
-                const res = await fetch(`/battle.php?id=${encodeURIComponent(mId)}`, { credentials: 'same-origin' });
+                const res = await fetch(`/battle.php?id=${encodeURIComponent(mId)}`, {
+                    credentials: 'same-origin'
+                });
                 if (!res.ok) throw new Error(`Fetch failed (HTTP ${res.status})`);
 
                 const html = await res.text();
@@ -2903,7 +3130,7 @@ async function startOrContinueAutoLevel() {
 
                 // EXP/DMG from 2nd .stat-line, 3rd .stat-block (fallback scan)
                 let expPerDmgText = '';
-                (function () {
+                (function() {
                     const lines = doc.querySelectorAll('.stat-line');
                     const secondLine = lines[1];
                     if (!secondLine) return;
@@ -2932,9 +3159,9 @@ async function startOrContinueAutoLevel() {
                 const expPerDmgVal = parseNumeric(expPerDmgText);
 
                 // Base EXP
-                const expRaw = (Number.isFinite(damageVal) && Number.isFinite(expPerDmgVal))
-                ? (damageVal * expPerDmgVal)
-                : NaN;
+                const expRaw = (Number.isFinite(damageVal) && Number.isFinite(expPerDmgVal)) ?
+                    (damageVal * expPerDmgVal) :
+                    NaN;
 
                 // Wave/level multiplier rules (same as you had)
                 let multiplier = 1;
@@ -2945,7 +3172,10 @@ async function startOrContinueAutoLevel() {
                 const adjusted = Number.isFinite(expRaw) ? expRaw * multiplier : NaN;
                 const finalExpCeil = Number.isFinite(adjusted) ? Math.ceil(adjusted) : NaN;
 
-                const entry = { monsterId: mId, finalExpCeil: Number.isFinite(finalExpCeil) ? finalExpCeil : null };
+                const entry = {
+                    monsterId: mId,
+                    finalExpCeil: Number.isFinite(finalExpCeil) ? finalExpCeil : null
+                };
 
                 // Store (map + list)
                 window.monsterExpMap.set(mId, entry.finalExpCeil);
@@ -2961,7 +3191,10 @@ async function startOrContinueAutoLevel() {
                 console.warn('[EXP Plan] Failed monster fetch/parse', mId, err);
                 window.monsterExpMap.set(mId, null);
                 const idx = window.monsterExpList.findIndex(x => x.monsterId === mId);
-                const entry = { monsterId: mId, finalExpCeil: null };
+                const entry = {
+                    monsterId: mId,
+                    finalExpCeil: null
+                };
                 if (idx >= 0) window.monsterExpList[idx] = entry;
                 else window.monsterExpList.push(entry);
                 return entry;
@@ -2969,32 +3202,55 @@ async function startOrContinueAutoLevel() {
         });
 
         await Promise.allSettled(tasks);
-        return { ok: true, count: cards.length };
+        return {
+            ok: true,
+            count: cards.length
+        };
     }
 
     // ----------------------------
     // Build plan: sum until total > needed
     // strategy: "desc" (default) | "asIs" | "asc"
     // ----------------------------
-    function buildExpPlan({ strategy = 'desc' } = {}) {
-        const { currentExp, maxExp, needed } = readExpNeededFromTopBar();
+    function buildExpPlan({
+        strategy = 'desc'
+    } = {}) {
+        const {
+            currentExp,
+            maxExp,
+            needed
+        } = readExpNeededFromTopBar();
 
         const list = Array.isArray(window.monsterExpList) ? window.monsterExpList.slice() : [];
         const cleaned = list
-        .map(x => ({
-            monsterId: String(x.monsterId),
-            finalExpCeil: Number.isFinite(x.finalExpCeil) ? x.finalExpCeil : 0
-        }))
-        .filter(x => x.monsterId);
+            .map(x => ({
+                monsterId: String(x.monsterId),
+                finalExpCeil: Number.isFinite(x.finalExpCeil) ? x.finalExpCeil : 0
+            }))
+            .filter(x => x.monsterId);
 
         if (strategy === 'desc') cleaned.sort((a, b) => b.finalExpCeil - a.finalExpCeil);
         else if (strategy === 'asc') cleaned.sort((a, b) => a.finalExpCeil - b.finalExpCeil);
 
         if (!Number.isFinite(needed)) {
-            return { currentExp, maxExp, needed, selected: [], totalFromSelected: 0, exceeds: false };
+            return {
+                currentExp,
+                maxExp,
+                needed,
+                selected: [],
+                totalFromSelected: 0,
+                exceeds: false
+            };
         }
         if (needed <= 0) {
-            return { currentExp, maxExp, needed: 0, selected: [], totalFromSelected: 0, exceeds: true };
+            return {
+                currentExp,
+                maxExp,
+                needed: 0,
+                selected: [],
+                totalFromSelected: 0,
+                exceeds: true
+            };
         }
 
         const selected = [];
@@ -3029,7 +3285,11 @@ async function startOrContinueAutoLevel() {
         clearExpPlanUI();
 
         // Highlight planned cards
-        for (const { monsterId, finalExpCeil } of plan.selected) {
+        for (const {
+                monsterId,
+                finalExpCeil
+            }
+            of plan.selected) {
             const card = document.querySelector(`.monster-card[data-monster-id="${CSS.escape(monsterId)}"]`);
             if (!card) continue;
 
@@ -3046,13 +3306,13 @@ async function startOrContinueAutoLevel() {
         box-shadow:0 1px 3px rgba(0,0,0,.25);
         z-index: 999;
       `;
-        card.appendChild(badge);
-    }
+            card.appendChild(badge);
+        }
 
-      // Panel
-      const panel = document.createElement('div');
-      panel.id = 'exp-plan-panel';
-      panel.style.cssText = `
+        // Panel
+        const panel = document.createElement('div');
+        panel.id = 'exp-plan-panel';
+        panel.style.cssText = `
       position: fixed;
       bottom: 16px;
       right: 16px;
@@ -3068,11 +3328,11 @@ async function startOrContinueAutoLevel() {
       display:none;
     `;
 
-      const count = plan.selected.length;
-      const needed = Number.isFinite(plan.needed) ? formatInt(plan.needed) : '—';
-      const total = Number.isFinite(plan.totalFromSelected) ? formatInt(plan.totalFromSelected) : '—';
+        const count = plan.selected.length;
+        const needed = Number.isFinite(plan.needed) ? formatInt(plan.needed) : '—';
+        const total = Number.isFinite(plan.totalFromSelected) ? formatInt(plan.totalFromSelected) : '—';
 
-      panel.innerHTML = `
+        panel.innerHTML = `
       <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
         <div style="font-weight:800; font-size:14px;">EXP Plan</div>
         <button id="exp-plan-close" style="
@@ -3108,9 +3368,9 @@ async function startOrContinueAutoLevel() {
       "></div>
     `;
 
-      document.body.appendChild(panel);
-      panel.querySelector('#exp-plan-close')?.addEventListener('click', clearExpPlanUI);
-  }
+        document.body.appendChild(panel);
+        panel.querySelector('#exp-plan-close')?.addEventListener('click', clearExpPlanUI);
+    }
 
     function injectExpPlanStylesOnce() {
         if (document.getElementById('exp-plan-style')) return;
@@ -3128,8 +3388,8 @@ async function startOrContinueAutoLevel() {
         transform: translateY(1px);
       }
     `;
-      document.head.appendChild(style);
-  }
+        document.head.appendChild(style);
+    }
 
     // ----------------------------
     // Looting (JS-driven #loot-button) via hidden iframe
@@ -3149,13 +3409,17 @@ async function startOrContinueAutoLevel() {
       border: 0;
       z-index: -1;
     `;
-      document.body.appendChild(iframe);
-      return iframe;
-  }
+        document.body.appendChild(iframe);
+        return iframe;
+    }
 
-    async function loadIframeFastNoCss(iframe, url, { timeoutMs = 20000 } = {}) {
+    async function loadIframeFastNoCss(iframe, url, {
+        timeoutMs = 20000
+    } = {}) {
         // 1) Fetch battle HTML ourselves (same-origin cookies included)
-        const res = await fetch(url, { credentials: 'same-origin' });
+        const res = await fetch(url, {
+            credentials: 'same-origin'
+        });
         if (!res.ok) throw new Error(`Failed to fetch ${url} (HTTP ${res.status})`);
         let html = await res.text();
 
@@ -3212,46 +3476,80 @@ async function startOrContinueAutoLevel() {
         return null;
     }
 
-    async function clickLootAndWait(iframe, { timeoutMs = 20000 } = {}) {
+    async function clickLootAndWait(iframe, {
+        timeoutMs = 20000
+    } = {}) {
         const doc = iframe.contentDocument;
-        if (!doc) return { ok: false, reason: 'no iframe document' };
+        if (!doc) return {
+            ok: false,
+            reason: 'no iframe document'
+        };
 
         const btn = doc.querySelector('#loot-button');
-        if (!btn) return { ok: false, reason: 'loot-button not found' };
+        if (!btn) return {
+            ok: false,
+            reason: 'loot-button not found'
+        };
 
         const initialText = (btn.textContent || '').trim().toLowerCase();
 
         let loadedAgain = false;
-        const onLoad = () => { loadedAgain = true; };
+        const onLoad = () => {
+            loadedAgain = true;
+        };
         iframe.addEventListener('load', onLoad);
 
         let mutated = false;
-        const mo = new MutationObserver(() => { mutated = true; });
-        mo.observe(doc.documentElement, { subtree: true, childList: true, attributes: true });
+        const mo = new MutationObserver(() => {
+            mutated = true;
+        });
+        mo.observe(doc.documentElement, {
+            subtree: true,
+            childList: true,
+            attributes: true
+        });
 
         try {
             btn.click();
 
             const start = Date.now();
             while (Date.now() - start < timeoutMs) {
-                if (loadedAgain) return { ok: true, mode: 'reload' };
+                if (loadedAgain) return {
+                    ok: true,
+                    mode: 'reload'
+                };
 
                 const d = iframe.contentDocument;
-                if (!d) return { ok: true, mode: 'doc-lost' };
+                if (!d) return {
+                    ok: true,
+                    mode: 'doc-lost'
+                };
 
                 const b2 = d.querySelector('#loot-button');
-                if (!b2) return { ok: true, mode: 'button-gone' };
+                if (!b2) return {
+                    ok: true,
+                    mode: 'button-gone'
+                };
 
                 const text2 = (b2.textContent || '').trim().toLowerCase();
                 const disabled = b2.disabled || b2.getAttribute('aria-disabled') === 'true';
 
-                if (disabled) return { ok: true, mode: 'disabled' };
-                if (initialText && text2 && text2 !== initialText) return { ok: true, mode: 'text-changed' };
+                if (disabled) return {
+                    ok: true,
+                    mode: 'disabled'
+                };
+                if (initialText && text2 && text2 !== initialText) return {
+                    ok: true,
+                    mode: 'text-changed'
+                };
 
                 if (mutated) mutated = false;
                 await sleep(150);
             }
-            return { ok: false, reason: 'loot wait timeout' };
+            return {
+                ok: false,
+                reason: 'loot wait timeout'
+            };
         } finally {
             iframe.removeEventListener('load', onLoad);
             mo.disconnect();
@@ -3263,74 +3561,102 @@ async function startOrContinueAutoLevel() {
         const url = `/battle.php?id=${encodeURIComponent(monsterId)}`;
 
         try {
-            await loadIframeFastNoCss(iframe, url, { timeoutMs: 300 });
+            await loadIframeFastNoCss(iframe, url, {
+                timeoutMs: 300
+            });
             const lootBtn = await waitForSelectorInIframe(iframe, '#loot-button', 180);
             if (!lootBtn) {
-                return { ok: false, monsterId, step: 'find', reason: 'loot-button not present (already claimed / not slain)' };
+                return {
+                    ok: false,
+                    monsterId,
+                    step: 'find',
+                    reason: 'loot-button not present (already claimed / not slain)'
+                };
             }
-            const clicked = await clickLootAndWait(iframe, { timeoutMs: 300 });
+            const clicked = await clickLootAndWait(iframe, {
+                timeoutMs: 300
+            });
             if (!clicked.ok) {
-                return { ok: false, monsterId, step: 'click', reason: clicked.reason };
+                return {
+                    ok: false,
+                    monsterId,
+                    step: 'click',
+                    reason: clicked.reason
+                };
             }
-            return { ok: true, monsterId, step: 'done', mode: clicked.mode };
+            return {
+                ok: true,
+                monsterId,
+                step: 'done',
+                mode: clicked.mode
+            };
         } catch (e) {
-            return { ok: false, monsterId, step: 'exception', reason: String(e?.message || e) };
+            return {
+                ok: false,
+                monsterId,
+                step: 'exception',
+                reason: String(e?.message || e)
+            };
         }
     }
 
-    async function runPlannedLootOnly(planSelected, { delayMs = 800 } = {}) {
+    async function runPlannedLootOnly(planSelected, {
+        delayMs = 800
+    } = {}) {
         const panel = document.querySelector('#exp-plan-panel');
         const progressEl = panel?.querySelector('#exp-plan-progress');
 
         const results = [];
         for (let i = 0; i < planSelected.length; i++) {
             const statusLabel = document.querySelector('#exp-plan-status-label');
-if (statusLabel) {
-  statusLabel.style.display = 'inline';
-  statusLabel.style.color = '#cfd8dc';
-  statusLabel.textContent = `Looting: ${i + 1} / ${planSelected.length}`;
-}
+            if (statusLabel) {
+                statusLabel.style.display = 'inline';
+                statusLabel.style.color = '#cfd8dc';
+                statusLabel.textContent = `Looting: ${i + 1} / ${planSelected.length}`;
+            }
 
-            const { monsterId } = planSelected[i];
+            const {
+                monsterId
+            } = planSelected[i];
             if (progressEl) progressEl.textContent = `Looting planned ${i + 1}/${planSelected.length} — Monster ${monsterId}...`;
 
             const r = await lootMonsterByIdIframe(monsterId);
             results.push(r);
 
             if (progressEl) {
-                progressEl.textContent = r.ok
-                    ? `✅ Looted ${monsterId} (${i + 1}/${planSelected.length})`
-          : `⚠️ Failed ${monsterId} [${r.step}] ${r.reason}`;
-      }
+                progressEl.textContent = r.ok ?
+                    `✅ Looted ${monsterId} (${i + 1}/${planSelected.length})` :
+                    `⚠️ Failed ${monsterId} [${r.step}] ${r.reason}`;
+            }
 
-        await sleep(delayMs);
-    }
+            await sleep(delayMs);
+        }
 
-      if (progressEl) {
-          const okCount = results.filter(x => x.ok).length;
-          progressEl.textContent = `Done looting planned monsters. Success: ${okCount}/${results.length}`;
-      }
+        if (progressEl) {
+            const okCount = results.filter(x => x.ok).length;
+            progressEl.textContent = `Done looting planned monsters. Success: ${okCount}/${results.length}`;
+        }
         const statusLabel = document.querySelector('#exp-plan-status-label');
-if (statusLabel) {
-  statusLabel.style.color = '#81c784';
-  statusLabel.textContent = `✓ Plan completed (${planSelected.length} / ${planSelected.length})`;
-}
-      return results;
-      //setTimeout(() => {window.location.reload();}, 500);
-  }
+        if (statusLabel) {
+            statusLabel.style.color = '#81c784';
+            statusLabel.textContent = `✓ Plan completed (${planSelected.length} / ${planSelected.length})`;
+        }
+        return results;
+        //setTimeout(() => {window.location.reload();}, 500);
+    }
 
     // ----------------------------
     // Buttons next to #btnLootX (styled like it)
     // ----------------------------
-  function addExpPlanButtons() {
-  if (document.querySelector('#run-exp-plan-btn')) return;
+    function addExpPlanButtons() {
+        if (document.querySelector('#run-exp-plan-btn')) return;
 
-  const lootBtn = document.querySelector('#btnLootX') || document.querySelector('#multiLootButton');
-  if (!lootBtn || !lootBtn.parentNode) return;
+        const lootBtn = document.querySelector('#btnLootX') || document.querySelector('#multiLootButton');
+        if (!lootBtn || !lootBtn.parentNode) return;
 
-  injectExpPlanStylesOnce();
+        injectExpPlanStylesOnce();
 
-  const lootStyle = `
+        const lootStyle = `
     background: #333;
     border: none;
     border-radius: 8px;
@@ -3345,48 +3671,53 @@ if (statusLabel) {
     vertical-align: middle;
   `;
 
-  const runBtn = document.createElement('button');
-  runBtn.id = 'run-exp-plan-btn';
-  runBtn.type = 'button';
-  runBtn.textContent = 'loot to next level';
-  runBtn.style.cssText = lootStyle + `
+        const runBtn = document.createElement('button');
+        runBtn.id = 'run-exp-plan-btn';
+        runBtn.type = 'button';
+        runBtn.textContent = 'loot to next level';
+        runBtn.style.cssText = lootStyle + `
     margin-left: 8px;
     background: #2f3a56;
     border-color: #3a3f63;
   `;
 
-  const stopBtn = document.createElement('button');
-  stopBtn.id = 'stop-exp-plan-btn';
-  stopBtn.type = 'button';
-  stopBtn.textContent = 'Stop';
-  stopBtn.style.cssText = lootStyle + `
+        const stopBtn = document.createElement('button');
+        stopBtn.id = 'stop-exp-plan-btn';
+        stopBtn.type = 'button';
+        stopBtn.textContent = 'Stop';
+        stopBtn.style.cssText = lootStyle + `
     margin-left: 6px;
     background: #8b2c2c;
     border-color: #a33737;
     display: none;
   `;
 
-  lootBtn.insertAdjacentElement('afterend', runBtn);
-  runBtn.insertAdjacentElement('afterend', stopBtn);
+        lootBtn.insertAdjacentElement('afterend', runBtn);
+        runBtn.insertAdjacentElement('afterend', stopBtn);
 
-  runBtn.addEventListener('click', async () => {
-    if (runBtn.dataset.running === '1') return; // prevent double clicks
-    // Start (or resume) the auto-level session
-    await startOrContinueAutoLevel();
-  });
+        runBtn.addEventListener('click', async () => {
+            if (runBtn.dataset.running === '1') return; // prevent double clicks
+            // Start (or resume) the auto-level session
+            await startOrContinueAutoLevel();
+        });
 
-  stopBtn.addEventListener('click', () => {
-    clearAutoState();
-    setRunButtonState({ running: false, text: 'loot to next level' });
-    setStopButtonState({ visible: false });
-  });
+        stopBtn.addEventListener('click', () => {
+            clearAutoState();
+            setRunButtonState({
+                running: false,
+                text: 'loot to next level'
+            });
+            setStopButtonState({
+                visible: false
+            });
+        });
 
-  // If a session was left active before refresh, auto-resume it.
-  if (isAutoActive()) {
-    // Slight delay lets the page settle and cards render
-    setTimeout(() => startOrContinueAutoLevel(), 500);
-  }
-}
+        // If a session was left active before refresh, auto-resume it.
+        if (isAutoActive()) {
+            // Slight delay lets the page settle and cards render
+            setTimeout(() => startOrContinueAutoLevel(), 500);
+        }
+    }
     // Retry-init because page is dynamic
     (function initButtons() {
         let tries = 0;
@@ -3403,8 +3734,8 @@ if (statusLabel) {
 
 
 if (vv.isOn('quest_modal')) {
-  injectQuestModalStyles();
-  ensureQuestModal();
+    injectQuestModalStyles();
+    ensureQuestModal();
 }
 
 
@@ -3465,7 +3796,7 @@ function waitForElement(selector, {
 }
 
 async function createDungeonCards() {
-    const titles = ['Shadowbridge Warrens', 'Castle of the Fallen Prince'];
+    const titles = ['Shadowbridge Warrens', 'Castle of the Fallen Prince', 'The Polyhedral Crucible'];
 
     let container;
     try {
@@ -3535,130 +3866,130 @@ function initAdventurersGuildQuests() {
 
     // Fetch adventures page
     fetch('https://demonicscans.org/adventurers_guild.php', {
-        credentials: 'include',
-        mode: 'same-origin'
-    })
+            credentials: 'include',
+            mode: 'same-origin'
+        })
         .then(response => response.text())
         .then(html => {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
 
-        // Extract available quests - updated selectors to match actual HTML structure
-        const availableQuests = [];
-        const availableQuestElements = doc.querySelectorAll('.quest-list .quest-row');
-        availableQuestElements.forEach(questEl => {
-            // Check if this is an active quest by looking for progress indicators
-            const progress = questEl.querySelector('.quest-progress')?.textContent?.trim();
-            const hasProgress = progress && progress.includes('Progress:');
+            // Extract available quests - updated selectors to match actual HTML structure
+            const availableQuests = [];
+            const availableQuestElements = doc.querySelectorAll('.quest-list .quest-row');
+            availableQuestElements.forEach(questEl => {
+                // Check if this is an active quest by looking for progress indicators
+                const progress = questEl.querySelector('.quest-progress')?.textContent?.trim();
+                const hasProgress = progress && progress.includes('Progress:');
 
-            // Only add to available quests if it doesn't have progress (not active)
-            if (!hasProgress) {
-                const title = questEl.querySelector('.quest-main-title')?.textContent?.trim();
-                const description = questEl.querySelector('.quest-main-desc')?.textContent?.trim();
-                const reward = questEl.querySelector('.quest-reward')?.textContent?.trim();
+                // Only add to available quests if it doesn't have progress (not active)
+                if (!hasProgress) {
+                    const title = questEl.querySelector('.quest-main-title')?.textContent?.trim();
+                    const description = questEl.querySelector('.quest-main-desc')?.textContent?.trim();
+                    const reward = questEl.querySelector('.quest-reward')?.textContent?.trim();
 
-                // Extract quest ID from accept button
-                const acceptBtn = questEl.querySelector('.quest-accept-btn');
-                let questId = null;
-                if (acceptBtn) {
-                    const onclickStr = acceptBtn.getAttribute('onclick') || '';
-                    const match = onclickStr.match(/acceptQuest\((\d+)/);
-                    if (match) {
-                        questId = match[1];
+                    // Extract quest ID from accept button
+                    const acceptBtn = questEl.querySelector('.quest-accept-btn');
+                    let questId = null;
+                    if (acceptBtn) {
+                        const onclickStr = acceptBtn.getAttribute('onclick') || '';
+                        const match = onclickStr.match(/acceptQuest\((\d+)/);
+                        if (match) {
+                            questId = match[1];
+                        }
+                    }
+
+                    if (title) {
+                        // Check if this quest is already in the array to prevent duplicates
+                        const existingQuest = availableQuests.find(q => q.title === title);
+                        if (!existingQuest) {
+                            availableQuests.push({
+                                title: title,
+                                description: description || 'No description available',
+                                reward: reward || 'No reward specified',
+                                questId: questId,
+                                type: 'available'
+                            });
+                        }
                     }
                 }
+            });
 
-                if (title) {
-                    // Check if this quest is already in the array to prevent duplicates
-                    const existingQuest = availableQuests.find(q => q.title === title);
-                    if (!existingQuest) {
-                        availableQuests.push({
-                            title: title,
-                            description: description || 'No description available',
-                            reward: reward || 'No reward specified',
-                            questId: questId,
-                            type: 'available'
-                        });
+            // Extract active quests - look for active quest section
+            const activeQuests = [];
+            const activeQuestElements = doc.querySelectorAll('.quest-list .quest-row');
+            activeQuestElements.forEach(questEl => {
+                // Check if this is an active quest by looking for progress or specific indicators
+                const progress = questEl.querySelector('.quest-progress')?.textContent?.trim();
+                const hasProgress = progress && progress.includes('Progress:');
+
+                if (hasProgress) {
+                    const title = questEl.querySelector('.quest-main-title')?.textContent?.trim();
+                    const description = questEl.querySelector('.quest-main-desc')?.textContent?.trim();
+                    const timeLeft = questEl.querySelector('.quest-time')?.textContent?.trim();
+
+                    // Extract quest action from give up, finish, or donate button
+                    // Prioritize donate button over give up button
+                    const giveUpBtn = questEl.querySelector('.quest-giveup-btn');
+                    const finishBtn = questEl.querySelector('.quest-finish-btn');
+                    const donateBtn = questEl.querySelector('.quest-donate-btn');
+                    let questId = null;
+                    let actionType = null;
+                    let actionLabel = null;
+                    let itemId = null;
+
+                    if (donateBtn) {
+                        const onclickStr = donateBtn.getAttribute('onclick') || '';
+                        const match = onclickStr.match(/donateGatherItem\((\d+),\s*(\d+)/);
+                        if (match) {
+                            questId = match[1];
+                            itemId = match[2];
+                            actionType = 'donate';
+                            actionLabel = 'Donate';
+                        }
+                    } else if (finishBtn) {
+                        const onclickStr = finishBtn.getAttribute('onclick') || '';
+                        const match = onclickStr.match(/finishQuest\((\d+)/);
+                        if (match) {
+                            questId = match[1];
+                            actionType = 'finish';
+                            actionLabel = 'Finish quest';
+                        }
+                    } else if (giveUpBtn) {
+                        const onclickStr = giveUpBtn.getAttribute('onclick') || '';
+                        const match = onclickStr.match(/giveUpQuest\((\d+)/);
+                        if (match) {
+                            questId = match[1];
+                            actionType = 'giveUp';
+                            actionLabel = 'Give up';
+                        }
+                    }
+
+                    if (title) {
+                        // Check if this quest is already in the array to prevent duplicates
+                        const existingQuest = activeQuests.find(q => q.title === title);
+                        if (!existingQuest) {
+                            activeQuests.push({
+                                title: title,
+                                progress: progress || 'In progress',
+                                timeLeft: timeLeft || 'Unknown time remaining',
+                                questId: questId,
+                                itemId: itemId,
+                                actionType: actionType,
+                                actionLabel: actionLabel,
+                                type: 'active'
+                            });
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        // Extract active quests - look for active quest section
-        const activeQuests = [];
-        const activeQuestElements = doc.querySelectorAll('.quest-list .quest-row');
-        activeQuestElements.forEach(questEl => {
-            // Check if this is an active quest by looking for progress or specific indicators
-            const progress = questEl.querySelector('.quest-progress')?.textContent?.trim();
-            const hasProgress = progress && progress.includes('Progress:');
+            // Build HTML for quests
+            let questsHTML = '';
 
-            if (hasProgress) {
-                const title = questEl.querySelector('.quest-main-title')?.textContent?.trim();
-                const description = questEl.querySelector('.quest-main-desc')?.textContent?.trim();
-                const timeLeft = questEl.querySelector('.quest-time')?.textContent?.trim();
-
-                // Extract quest action from give up, finish, or donate button
-                // Prioritize donate button over give up button
-                const giveUpBtn = questEl.querySelector('.quest-giveup-btn');
-                const finishBtn = questEl.querySelector('.quest-finish-btn');
-                const donateBtn = questEl.querySelector('.quest-donate-btn');
-                let questId = null;
-                let actionType = null;
-                let actionLabel = null;
-                let itemId = null;
-
-                if (donateBtn) {
-                    const onclickStr = donateBtn.getAttribute('onclick') || '';
-                    const match = onclickStr.match(/donateGatherItem\((\d+),\s*(\d+)/);
-                    if (match) {
-                        questId = match[1];
-                        itemId = match[2];
-                        actionType = 'donate';
-                        actionLabel = 'Donate';
-                    }
-                } else if (finishBtn) {
-                    const onclickStr = finishBtn.getAttribute('onclick') || '';
-                    const match = onclickStr.match(/finishQuest\((\d+)/);
-                    if (match) {
-                        questId = match[1];
-                        actionType = 'finish';
-                        actionLabel = 'Finish quest';
-                    }
-                } else if (giveUpBtn) {
-                    const onclickStr = giveUpBtn.getAttribute('onclick') || '';
-                    const match = onclickStr.match(/giveUpQuest\((\d+)/);
-                    if (match) {
-                        questId = match[1];
-                        actionType = 'giveUp';
-                        actionLabel = 'Give up';
-                    }
-                }
-
-                if (title) {
-                    // Check if this quest is already in the array to prevent duplicates
-                    const existingQuest = activeQuests.find(q => q.title === title);
-                    if (!existingQuest) {
-                        activeQuests.push({
-                            title: title,
-                            progress: progress || 'In progress',
-                            timeLeft: timeLeft || 'Unknown time remaining',
-                            questId: questId,
-                            itemId: itemId,
-                            actionType: actionType,
-                            actionLabel: actionLabel,
-                            type: 'active'
-                        });
-                    }
-                }
-            }
-        });
-
-        // Build HTML for quests
-        let questsHTML = '';
-
-        if (availableQuests.length > 0) {
-            availableQuests.forEach(quest => {
-                questsHTML += `
+            if (availableQuests.length > 0) {
+                availableQuests.forEach(quest => {
+                    questsHTML += `
 
         <div class="sidebar-quest tm-clickable"
              data-q-title="${escapeHtml(quest.title)}"
@@ -3677,10 +4008,10 @@ function initAdventurersGuildQuests() {
                 questsHTML += '</div>';
             }
 
-        if (activeQuests.length > 0) {
-            questsHTML += '<div><div style="font-weight: bold; color: #f9e2af; margin-bottom: 8px; font-size: 11px;">⚡ Active Quests</div>';
-            activeQuests.forEach(quest => {
-                questsHTML += `
+            if (activeQuests.length > 0) {
+                questsHTML += '<div><div style="font-weight: bold; color: #f9e2af; margin-bottom: 8px; font-size: 11px;">⚡ Active Quests</div>';
+                activeQuests.forEach(quest => {
+                    questsHTML += `
 
 <div class="sidebar-quest tm-clickable"
      data-q-title="${escapeHtml(quest.title)}"
@@ -3699,21 +4030,21 @@ function initAdventurersGuildQuests() {
                 questsHTML += '</div>';
             }
 
-      if (availableQuests.length === 0 && activeQuests.length === 0) {
-    const cooldowns = JSON.parse(localStorage.getItem("quest_cooldowns") || "{}");
-    const now = Date.now();
-    let cdHTML = `<div style="text-align:center; padding: 10px; font-weight:bold; color:#cdd6f4; font-size:12px;">Quest Cooldowns</div>`;
+            if (availableQuests.length === 0 && activeQuests.length === 0) {
+                const cooldowns = JSON.parse(localStorage.getItem("quest_cooldowns") || "{}");
+                const now = Date.now();
+                let cdHTML = `<div style="text-align:center; padding: 10px; font-weight:bold; color:#cdd6f4; font-size:12px;">Quest Cooldowns</div>`;
 
-    const entries = Object.entries(cooldowns);
+                const entries = Object.entries(cooldowns);
 
-    if (entries.length === 0) {
-        cdHTML += `<div style="text-align:center; padding: 15px; color:#6c7086; font-size:11px; font-style:italic;">No cooldowns found</div>`;
-    } else {
-        entries.forEach(([id, q]) => {
-            const remaining = q.availableAt - now;
-            const status = remaining <= 0 ? "READY" : formatTime(remaining);
+                if (entries.length === 0) {
+                    cdHTML += `<div style="text-align:center; padding: 15px; color:#6c7086; font-size:11px; font-style:italic;">No cooldowns found</div>`;
+                } else {
+                    entries.forEach(([id, q]) => {
+                        const remaining = q.availableAt - now;
+                        const status = remaining <= 0 ? "READY" : formatTime(remaining);
 
-            cdHTML += `
+                        cdHTML += `
             <div style="margin-bottom:8px; padding:6px; background:rgba(30,30,46,0.45); border-radius:4px; border-left:2px solid ${
                 remaining <= 0 ? "#a6e3a1" : "#fab387"
             };">
@@ -3722,54 +4053,54 @@ function initAdventurersGuildQuests() {
                     remaining <= 0 ? "lightgreen" : "orange"
                 };">${status}</div>
             </div>`;
-        });
-    }
-
-    questsHTML = cdHTML;
-}
-
-        questsContainer.innerHTML = questsHTML;
-questsContainer.addEventListener('click', (e) => {
-  // If user clicked a button, let the button handler run
-  if (e.target.closest('button')) return;
-
-  const card = e.target.closest('.sidebar-quest');
-  if (!card) return;
-
-  openQuestModal({
-    title: card.dataset.qTitle,
-    type: card.dataset.qType,
-    description: card.dataset.qDescription,
-    reward: card.dataset.qReward,
-    progress: card.dataset.qProgress,
-    timeLeft: card.dataset.qTime
-  });
-});
-
-
-        // Add event listeners to quest action buttons
-        const questButtons = questsContainer.querySelectorAll('.quest-giveUp-btn, .quest-finish-btn, .quest-accept-btn, .quest-donate-btn');
-        questButtons.forEach(btn => {
-            btn.addEventListener('click', function() {
-                const questId = this.getAttribute('data-quest-id');
-                const actionType = this.classList.contains('quest-accept-btn') ? 'accept' :
-                this.classList.contains('quest-giveUp-btn') ? 'giveUp' :
-                this.classList.contains('quest-donate-btn') ? 'donate' : 'finish';
-                if (actionType === 'accept') {
-                    sidebarAcceptQuest(questId, this);
-                } else if (actionType === 'donate') {
-                    const itemId = this.getAttribute('data-item-id');
-                    sidebarDonateQuest(questId, itemId, this);
-                } else {
-                    sidebarQuestAction(actionType, questId, this);
+                    });
                 }
+
+                questsHTML = cdHTML;
+            }
+
+            questsContainer.innerHTML = questsHTML;
+            questsContainer.addEventListener('click', (e) => {
+                // If user clicked a button, let the button handler run
+                if (e.target.closest('button')) return;
+
+                const card = e.target.closest('.sidebar-quest');
+                if (!card) return;
+
+                openQuestModal({
+                    title: card.dataset.qTitle,
+                    type: card.dataset.qType,
+                    description: card.dataset.qDescription,
+                    reward: card.dataset.qReward,
+                    progress: card.dataset.qProgress,
+                    timeLeft: card.dataset.qTime
+                });
             });
-        });
-    })
+
+
+            // Add event listeners to quest action buttons
+            const questButtons = questsContainer.querySelectorAll('.quest-giveUp-btn, .quest-finish-btn, .quest-accept-btn, .quest-donate-btn');
+            questButtons.forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const questId = this.getAttribute('data-quest-id');
+                    const actionType = this.classList.contains('quest-accept-btn') ? 'accept' :
+                        this.classList.contains('quest-giveUp-btn') ? 'giveUp' :
+                        this.classList.contains('quest-donate-btn') ? 'donate' : 'finish';
+                    if (actionType === 'accept') {
+                        sidebarAcceptQuest(questId, this);
+                    } else if (actionType === 'donate') {
+                        const itemId = this.getAttribute('data-item-id');
+                        sidebarDonateQuest(questId, itemId, this);
+                    } else {
+                        sidebarQuestAction(actionType, questId, this);
+                    }
+                });
+            });
+        })
         .catch(error => {
-        console.error('Error fetching adventurers guild quests:', error);
-        questsContainer.innerHTML = '<div style="text-align: center; padding: 15px; color: #f38ba8; font-size: 11px;">Failed to load quests</div>';
-    });
+            console.error('Error fetching adventurers guild quests:', error);
+            questsContainer.innerHTML = '<div style="text-align: center; padding: 15px; color: #f38ba8; font-size: 11px;">Failed to load quests</div>';
+        });
 }
 
 function sidebarDonateQuest(questId, itemId, btn) {
@@ -3859,32 +4190,32 @@ function performSidebarDonate(questId, itemId, quantity, originalBtn) {
     // Function to send a single donation request
     const sendDonationRequest = () => {
         return fetch('/adventurers_donate_gather.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: new URLSearchParams({
-                quest_id: questId,
-                item_id: itemId
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({
+                    quest_id: questId,
+                    item_id: itemId
+                })
             })
-        })
             .then(r => r.json())
             .then(data => {
-            if (data && data.status === 'ok') {
-                donatedCount++;
-                originalBtn.textContent = `Donating... (${donatedCount}/${quantity})`;
-                return true;
-            } else {
-                failedCount++;
-                console.error('Donation failed:', data?.message);
-                return false;
-            }
-        })
+                if (data && data.status === 'ok') {
+                    donatedCount++;
+                    originalBtn.textContent = `Donating... (${donatedCount}/${quantity})`;
+                    return true;
+                } else {
+                    failedCount++;
+                    console.error('Donation failed:', data?.message);
+                    return false;
+                }
+            })
             .catch(error => {
-            failedCount++;
-            console.error('Donation error:', error);
-            return false;
-        });
+                failedCount++;
+                console.error('Donation error:', error);
+                return false;
+            });
     };
 
     // Send requests sequentially
@@ -3940,48 +4271,48 @@ function sidebarQuestAction(actionType, questId, btn) {
     };
 
     fetch(endpoints[actionType], {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: new URLSearchParams({
-            quest_id: questId
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+                quest_id: questId
+            })
         })
-    })
         .then(r => r.json())
         .then(data => {
-        if (data && data.status === 'ok') {
+            if (data && data.status === 'ok') {
 
-    // 🔥 Log cooldown when sidebar finishes the quest
-    if (actionType === "finish") {
-        const title = btn.closest(".sidebar-quest")
-             ?.querySelector(".quest-title")
-             ?.innerText.trim();
+                // 🔥 Log cooldown when sidebar finishes the quest
+                if (actionType === "finish") {
+                    const title = btn.closest(".sidebar-quest")
+                        ?.querySelector(".quest-title")
+                        ?.innerText.trim();
 
-        const store = loadCooldowns();
-        store[questId] = {
-            name: title || ("Quest " + questId),
-            completedAt: Date.now(),
-            availableAt: Date.now() + COOLDOWN_MS
-        };
-        saveCooldowns(store);
-        console.log("Cooldown logged from SIDEBAR:", questId, title);
-    }
+                    const store = loadCooldowns();
+                    store[questId] = {
+                        name: title || ("Quest " + questId),
+                        completedAt: Date.now(),
+                        availableAt: Date.now() + COOLDOWN_MS
+                    };
+                    saveCooldowns(store);
+                    console.log("Cooldown logged from SIDEBAR:", questId, title);
+                }
 
-            showNotification(data.message || `Quest ${actionType === 'giveUp' ? 'abandoned' : 'finished'}!`, 'success');
-            // Refresh the sidebar quests content
-            initAdventurersGuildQuests();
-        } else {
-            showNotification((data && data.message) ? data.message : `Could not ${actionType} quest.`, 'error');
+                showNotification(data.message || `Quest ${actionType === 'giveUp' ? 'abandoned' : 'finished'}!`, 'success');
+                // Refresh the sidebar quests content
+                initAdventurersGuildQuests();
+            } else {
+                showNotification((data && data.message) ? data.message : `Could not ${actionType} quest.`, 'error');
+                btn.disabled = false;
+                btn.textContent = actionType === 'giveUp' ? 'Give up' : 'Finish quest';
+            }
+        })
+        .catch(() => {
+            showNotification(`Server error while ${actionType === 'giveUp' ? 'abandoning' : 'finishing'} quest.`, 'error');
             btn.disabled = false;
             btn.textContent = actionType === 'giveUp' ? 'Give up' : 'Finish quest';
-        }
-    })
-        .catch(() => {
-        showNotification(`Server error while ${actionType === 'giveUp' ? 'abandoning' : 'finishing'} quest.`, 'error');
-        btn.disabled = false;
-        btn.textContent = actionType === 'giveUp' ? 'Give up' : 'Finish quest';
-    });
+        });
 }
 
 function sidebarAcceptQuest(questId, btn) {
@@ -3990,31 +4321,31 @@ function sidebarAcceptQuest(questId, btn) {
     btn.textContent = 'Accepting...';
 
     fetch('/adventurers_accept_quest.php', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: new URLSearchParams({
-            quest_id: questId
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+                quest_id: questId
+            })
         })
-    })
         .then(r => r.json())
         .then(data => {
-        if (data && data.status === 'ok') {
-            showNotification(data.message || 'Quest accepted!', 'success');
-            // Refresh the sidebar quests content
-            initAdventurersGuildQuests();
-        } else {
-            showNotification((data && data.message) ? data.message : 'Could not accept quest.', 'error');
+            if (data && data.status === 'ok') {
+                showNotification(data.message || 'Quest accepted!', 'success');
+                // Refresh the sidebar quests content
+                initAdventurersGuildQuests();
+            } else {
+                showNotification((data && data.message) ? data.message : 'Could not accept quest.', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Accept quest';
+            }
+        })
+        .catch(() => {
+            showNotification('Server error while accepting quest.', 'error');
             btn.disabled = false;
             btn.textContent = 'Accept quest';
-        }
-    })
-        .catch(() => {
-        showNotification('Server error while accepting quest.', 'error');
-        btn.disabled = false;
-        btn.textContent = 'Accept quest';
-    });
+        });
 }
 
 // end adventurers section
@@ -4119,33 +4450,33 @@ async function updateSidebarQuestPanel() {
 
     content.innerHTML = html;
 
-content.addEventListener('click', (e) => {
-    if (!vv.isOn('quest_modal')) return;
-  const card = e.target.closest('.sidebar-quest');
-  if (!card) return;
+    content.addEventListener('click', (e) => {
+        if (!vv.isOn('quest_modal')) return;
+        const card = e.target.closest('.sidebar-quest');
+        if (!card) return;
 
-  openQuestModal({
-    title: card.dataset.qTitle,
-    type: card.dataset.qType,
-    description: card.dataset.qDescription,
-    progress: card.dataset.qProgress
-  });
-});
-if (!content.dataset.tmModalBound) {
-  content.dataset.tmModalBound = "1";
-  content.addEventListener('click', (e) => {
-      if (!vv.isOn('quest_modal')) return;
-    const card = e.target.closest('.sidebar-quest');
-    if (!card) return;
-
-    openQuestModal({
-      title: card.dataset.qTitle,
-      type: card.dataset.qType,
-      description: card.dataset.qDescription,
-      progress: card.dataset.qProgress
+        openQuestModal({
+            title: card.dataset.qTitle,
+            type: card.dataset.qType,
+            description: card.dataset.qDescription,
+            progress: card.dataset.qProgress
+        });
     });
-  });
-}
+    if (!content.dataset.tmModalBound) {
+        content.dataset.tmModalBound = "1";
+        content.addEventListener('click', (e) => {
+            if (!vv.isOn('quest_modal')) return;
+            const card = e.target.closest('.sidebar-quest');
+            if (!card) return;
+
+            openQuestModal({
+                title: card.dataset.qTitle,
+                type: card.dataset.qType,
+                description: card.dataset.qDescription,
+                progress: card.dataset.qProgress
+            });
+        });
+    }
 
 
 }
@@ -4204,38 +4535,38 @@ function fetchAndUpdateSidebarStats() {
     fetch('stats.php')
         .then(response => response.text())
         .then(html => {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
 
-        const points = doc.getElementById('v-points')?.textContent || '0';
-        const attack = doc.getElementById('v-attack')?.textContent || '0';
-        const defense = doc.getElementById('v-defense')?.textContent || '0';
-        const stamina = doc.getElementById('v-stamina')?.textContent || '0';
+            const points = doc.getElementById('v-points')?.textContent || '0';
+            const attack = doc.getElementById('v-attack')?.textContent || '0';
+            const defense = doc.getElementById('v-defense')?.textContent || '0';
+            const stamina = doc.getElementById('v-stamina')?.textContent || '0';
 
-        updateSidebarStats({
-            STAT_POINTS: points,
-            ATTACK: attack,
-            DEFENSE: defense,
-            STAMINA: stamina
-        });
-    })
-        .catch(err => {
-        console.error('Stats fetch error:', err);
-        // Fallback: try to get from any existing elements on current page
-        const points = document.getElementById('v-points')?.textContent || '0';
-        const attack = document.getElementById('v-attack')?.textContent || '0';
-        const defense = document.getElementById('v-defense')?.textContent || '0';
-        const stamina = document.getElementById('v-stamina')?.textContent || '0';
-
-        if (points !== '0' || attack !== '0' || defense !== '0' || stamina !== '0') {
             updateSidebarStats({
                 STAT_POINTS: points,
                 ATTACK: attack,
                 DEFENSE: defense,
                 STAMINA: stamina
             });
-        }
-    });
+        })
+        .catch(err => {
+            console.error('Stats fetch error:', err);
+            // Fallback: try to get from any existing elements on current page
+            const points = document.getElementById('v-points')?.textContent || '0';
+            const attack = document.getElementById('v-attack')?.textContent || '0';
+            const defense = document.getElementById('v-defense')?.textContent || '0';
+            const stamina = document.getElementById('v-stamina')?.textContent || '0';
+
+            if (points !== '0' || attack !== '0' || defense !== '0' || stamina !== '0') {
+                updateSidebarStats({
+                    STAT_POINTS: points,
+                    ATTACK: attack,
+                    DEFENSE: defense,
+                    STAMINA: stamina
+                });
+            }
+        });
 }
 
 function updateSidebarStats(userData) {
@@ -4275,87 +4606,87 @@ function sidebarAlloc(stat, amount) {
     document.querySelectorAll('.upgrade-btn').forEach(btn => btn.disabled = true);
 
     fetch('stats_ajax.php', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body
-    })
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body
+        })
         .then(async r => {
-        const txt = await r.text();
-        try {
-            const json = JSON.parse(txt);
-            if (json.error) {
-                throw new Error(json.error);
-            }
-            return {
-                okHTTP: r.ok,
-                json,
-                raw: txt
-            };
-        } catch (parseError) {
-            // If not JSON or has error, try to parse as plain text
-            if (r.ok && txt.includes('STAT_POINTS')) {
-                const stats = {};
-                const lines = txt.split('\n');
-                lines.forEach(line => {
-                    if (line.includes('STAT_POINTS')) stats.STAT_POINTS = line.split('=')[1]?.trim();
-                    if (line.includes('ATTACK')) stats.ATTACK = line.split('=')[1]?.trim();
-                    if (line.includes('DEFENSE')) stats.DEFENSE = line.split('=')[1]?.trim();
-                    if (line.includes('STAMINA')) stats.STAMINA = line.split('=')[1]?.trim();
-                });
+            const txt = await r.text();
+            try {
+                const json = JSON.parse(txt);
+                if (json.error) {
+                    throw new Error(json.error);
+                }
                 return {
                     okHTTP: r.ok,
-                    json: {
-                        ok: true,
-                        user: stats
-                    },
+                    json,
                     raw: txt
                 };
+            } catch (parseError) {
+                // If not JSON or has error, try to parse as plain text
+                if (r.ok && txt.includes('STAT_POINTS')) {
+                    const stats = {};
+                    const lines = txt.split('\n');
+                    lines.forEach(line => {
+                        if (line.includes('STAT_POINTS')) stats.STAT_POINTS = line.split('=')[1]?.trim();
+                        if (line.includes('ATTACK')) stats.ATTACK = line.split('=')[1]?.trim();
+                        if (line.includes('DEFENSE')) stats.DEFENSE = line.split('=')[1]?.trim();
+                        if (line.includes('STAMINA')) stats.STAMINA = line.split('=')[1]?.trim();
+                    });
+                    return {
+                        okHTTP: r.ok,
+                        json: {
+                            ok: true,
+                            user: stats
+                        },
+                        raw: txt
+                    };
+                }
+                throw new Error(`Bad response (${r.status}): ${txt}`);
             }
-            throw new Error(`Bad response (${r.status}): ${txt}`);
-        }
-    })
+        })
         .then(pack => {
-        if (!pack.okHTTP) {
-            showNotification(`HTTP Error: ${pack.raw}`, 'error');
-            return;
-        }
+            if (!pack.okHTTP) {
+                showNotification(`HTTP Error: ${pack.raw}`, 'error');
+                return;
+            }
 
-        const res = pack.json;
-        if (!res.ok) {
-            showNotification(res.msg || res.error || 'Allocation failed', 'error');
-            return;
-        }
+            const res = pack.json;
+            if (!res.ok) {
+                showNotification(res.msg || res.error || 'Allocation failed', 'error');
+                return;
+            }
 
-        const u = res.user;
-        updateSidebarStats(u);
+            const u = res.user;
+            updateSidebarStats(u);
 
-        // Also update main stats page if we're on it
-        if (window.location.pathname.includes('stats')) {
-            const mainPoints = document.getElementById('v-points');
-            const mainAttack = document.getElementById('v-attack');
-            const mainDefense = document.getElementById('v-defense');
-            const mainStamina = document.getElementById('v-stamina');
+            // Also update main stats page if we're on it
+            if (window.location.pathname.includes('stats')) {
+                const mainPoints = document.getElementById('v-points');
+                const mainAttack = document.getElementById('v-attack');
+                const mainDefense = document.getElementById('v-defense');
+                const mainStamina = document.getElementById('v-stamina');
 
-            if (mainPoints) mainPoints.textContent = u.STAT_POINTS || u.stat_points || 0;
-            if (mainAttack) mainAttack.textContent = u.ATTACK || u.attack || 0;
-            if (mainDefense) mainDefense.textContent = u.DEFENSE || u.defense || 0;
-            if (mainStamina) mainStamina.textContent = u.STAMINA || u.MAX_STAMINA || u.stamina || 0;
-        }
+                if (mainPoints) mainPoints.textContent = u.STAT_POINTS || u.stat_points || 0;
+                if (mainAttack) mainAttack.textContent = u.ATTACK || u.attack || 0;
+                if (mainDefense) mainDefense.textContent = u.DEFENSE || u.defense || 0;
+                if (mainStamina) mainStamina.textContent = u.STAMINA || u.MAX_STAMINA || u.stamina || 0;
+            }
 
-        showNotification(`Successfully upgraded ${stat} by ${amount}!`, 'success');
-    })
+            showNotification(`Successfully upgraded ${stat} by ${amount}!`, 'success');
+        })
         .catch(err => {
-        console.error(err);
-        showNotification(err.message || 'Network error occurred', 'error');
-    })
+            console.error(err);
+            showNotification(err.message || 'Network error occurred', 'error');
+        })
         .finally(() => {
-        // Re-enable upgrade buttons
-        document.querySelectorAll('.upgrade-btn').forEach(btn => btn.disabled = false);
-        // Refresh stats after allocation
-        setTimeout(fetchAndUpdateSidebarStats, 500);
-    });
+            // Re-enable upgrade buttons
+            document.querySelectorAll('.upgrade-btn').forEach(btn => btn.disabled = false);
+            // Refresh stats after allocation
+            setTimeout(fetchAndUpdateSidebarStats, 500);
+        });
 }
 
 // End stats section
@@ -4367,8 +4698,7 @@ const POTIONS = [{
     icon: 'https://demonicscans.org/images/items/1758633119_10_exp_potion.webp',
     multi: false,
     hasTimer: false
-}
-                ];
+}];
 
 
 async function initAddPotions() {
@@ -4438,14 +4768,14 @@ async function findConsumableByName(name) {
         // Locate a slot whose image alt matches or includes the name
         const slots = Array.from(doc.querySelectorAll('.slot-box'));
         const target =
-              slots.find(s => {
-                  const img = s.querySelector('img');
-                  return img && img.alt && img.alt.trim().toLowerCase() === name.toLowerCase();
-              }) ||
-              slots.find(s => {
-                  const img = s.querySelector('img');
-                  return img && img.alt && img.alt.toLowerCase().includes(name.toLowerCase());
-              });
+            slots.find(s => {
+                const img = s.querySelector('img');
+                return img && img.alt && img.alt.trim().toLowerCase() === name.toLowerCase();
+            }) ||
+            slots.find(s => {
+                const img = s.querySelector('img');
+                return img && img.alt && img.alt.toLowerCase().includes(name.toLowerCase());
+            });
 
         if (!target) return null;
 
@@ -4488,7 +4818,7 @@ async function findConsumableByName(name) {
                 invId = target.dataset.itemId;
             } else {
                 const attr = target.getAttribute('data-item-id') ||
-                      target.getAttribute('data-item-id-raw') || '';
+                    target.getAttribute('data-item-id-raw') || '';
                 if (attr) {
                     const first = attr.split(',')[0].trim();
                     if (/^\d+$/.test(first)) invId = first;
@@ -4535,8 +4865,8 @@ async function findConsumableByName(name) {
         // Prefer the onclick's item name if present; otherwise the image alt
         const img = target.querySelector('img');
         const itemName =
-              itemNameFromOnclick ||
-              (img && img.alt ? img.alt.trim() : infoName || null);
+            itemNameFromOnclick ||
+            (img && img.alt ? img.alt.trim() : infoName || null);
 
         return {
             invId: invId ? String(invId) : null, // 1st arg of useItem(...)
@@ -4652,10 +4982,12 @@ const DEFAULT_ORDER = [
 
 
 ];
-const DEFAULT_DISABLED = [];            // none disabled by default
-const DEFAULT_CLICKS_DISABLED = true;   // sidebar clicks disabled while ordering (default)
+const DEFAULT_DISABLED = []; // none disabled by default
+const DEFAULT_CLICKS_DISABLED = true; // sidebar clicks disabled while ordering (default)
 
-function getNav() { return document.querySelector('.side-nav'); }
+function getNav() {
+    return document.querySelector('.side-nav');
+}
 
 
 function getCurrentAnchors() {
@@ -4665,6 +4997,7 @@ function getCurrentAnchors() {
     return Array.from(nav.querySelectorAll('.side-nav-item'))
         .filter(a => a.id !== 'nav-order-btn');
 }
+
 function getCurrentHrefs() {
     return getCurrentAnchors().map(a => a.getAttribute('href'));
 }
@@ -4697,10 +5030,17 @@ function loadPrefs() {
                 if (Array.isArray(parsed.disabled)) disabled = parsed.disabled.filter(h => current.includes(h));
                 if (typeof parsed.clicksDisabled === 'boolean') clicksDisabled = parsed.clicksDisabled;
             }
-        } catch { /* fall back to defaults */ }
+        } catch {
+            /* fall back to defaults */
+        }
     }
-    return { order, disabled, clicksDisabled };
+    return {
+        order,
+        disabled,
+        clicksDisabled
+    };
 }
+
 function savePrefs(prefs) {
     localStorage.setItem(ORDER_KEY, JSON.stringify(prefs));
     // remove legacy key once we save v2
@@ -4711,7 +5051,11 @@ function savePrefs(prefs) {
 function populateOrderList() {
     const list = document.getElementById('nav-order-list');
     const clicksToggle = document.getElementById('nav-clicks-disabled');
-    const { order, disabled, clicksDisabled } = loadPrefs();
+    const {
+        order,
+        disabled,
+        clicksDisabled
+    } = loadPrefs();
     const disabledSet = new Set(disabled);
 
     list.innerHTML = '';
@@ -4795,6 +5139,7 @@ function readOrderFromList() {
     const items = Array.from(document.querySelectorAll('#nav-order-list .order-item'));
     return items.map(li => li.dataset.href);
 }
+
 function readDisabledFromList() {
     const items = Array.from(document.querySelectorAll('#nav-order-list .order-item'));
     return items
@@ -4814,6 +5159,7 @@ function openOrderPanel() {
     const clicksToggle = document.getElementById('nav-clicks-disabled');
     if (nav && clicksToggle.checked) nav.classList.add('nav-clicks-disabled');
 }
+
 function closeOrderPanel() {
     const panel = document.getElementById('nav-order-panel');
     panel.classList.remove('open');
@@ -4825,7 +5171,10 @@ function closeOrderPanel() {
 }
 
 // Init UI (idempotent)
-function initNavOrderUI({ onSave, onReset }) {
+function initNavOrderUI({
+    onSave,
+    onReset
+}) {
     const btn = document.getElementById('nav-order-btn');
     const panel = document.getElementById('nav-order-panel');
     const closeBtn = document.getElementById('nav-order-close');
@@ -4840,13 +5189,21 @@ function initNavOrderUI({ onSave, onReset }) {
 
     btn.addEventListener('click', openOrderPanel);
     closeBtn.addEventListener('click', closeOrderPanel);
-    panel.addEventListener('click', (e) => { if (e.target === panel) closeOrderPanel(); });
+    panel.addEventListener('click', (e) => {
+        if (e.target === panel) closeOrderPanel();
+    });
 
     hideAllBtn.addEventListener('click', () => {
-        document.querySelectorAll('#nav-order-list .enable-toggle').forEach(cb => { cb.checked = false; cb.dispatchEvent(new Event('change')); });
+        document.querySelectorAll('#nav-order-list .enable-toggle').forEach(cb => {
+            cb.checked = false;
+            cb.dispatchEvent(new Event('change'));
+        });
     });
     showAllBtn.addEventListener('click', () => {
-        document.querySelectorAll('#nav-order-list .enable-toggle').forEach(cb => { cb.checked = true; cb.dispatchEvent(new Event('change')); });
+        document.querySelectorAll('#nav-order-list .enable-toggle').forEach(cb => {
+            cb.checked = true;
+            cb.dispatchEvent(new Event('change'));
+        });
     });
 
     // Live apply/remove click disabling while panel open
@@ -4875,7 +5232,11 @@ function initNavOrderUI({ onSave, onReset }) {
         localStorage.removeItem(ORDER_KEY);
         localStorage.removeItem(LEGACY_KEY);
         const mergedDefaultOrder = mergeOrder(DEFAULT_ORDER, getCurrentHrefs());
-        const prefs = { order: mergedDefaultOrder, disabled: DEFAULT_DISABLED, clicksDisabled: DEFAULT_CLICKS_DISABLED };
+        const prefs = {
+            order: mergedDefaultOrder,
+            disabled: DEFAULT_DISABLED,
+            clicksDisabled: DEFAULT_CLICKS_DISABLED
+        };
         savePrefs(prefs);
         closeOrderPanel();
         onReset?.(prefs);
@@ -4886,12 +5247,12 @@ function initNavOrderUI({ onSave, onReset }) {
 
 
 
-
 //top hp/mp bar
-(function () {
+(function() {
     if (!vv.isOn('top_hp_mp')) return;
+
     /* STYLE INJECTION
-  =============================== */
+    =============================== */
     if (!document.getElementById('topbar-hp-style')) {
         const style = document.createElement('style');
         style.id = 'topbar-hp-style';
@@ -4945,7 +5306,7 @@ function initNavOrderUI({ onSave, onReset }) {
     }
 
     /* HELPERS
-  =============================== */
+    =============================== */
     function parseCurrentMax(text) {
         const match = text.match(/([\d,]+)\s*\/\s*([\d,]+)/);
         if (!match) return null;
@@ -4959,10 +5320,9 @@ function initNavOrderUI({ onSave, onReset }) {
     // kind: 'hp' | 'mp'
     function createNativeBar(kind, percent) {
         const wrap = document.createElement('div');
-        wrap.className = 'res-bar'; // native wrapper
+        wrap.className = 'res-bar';
 
         const inner = document.createElement('div');
-        // The site snippet shows: <div class="res-fill stamina|mana" style="width: ...;"></div>
         inner.className = `res-fill ${kind === 'hp' ? 'stamina' : 'mana'}`;
         inner.style.width = `${Math.max(0, Math.min(100, percent))}%`;
 
@@ -4971,7 +5331,6 @@ function initNavOrderUI({ onSave, onReset }) {
     }
 
     function tryReadHpMpFromCurrentPage() {
-        // Example: on battle pages or other pages that already render these lines
         const nodes = document.querySelectorAll('.battle-card.player-card .hp-text');
         if (nodes && nodes.length) {
             return Array.from(nodes).map((n) => n.textContent.trim());
@@ -4979,19 +5338,18 @@ function initNavOrderUI({ onSave, onReset }) {
         return null;
     }
 
-    /* STEP 1: GET PLAYER HP / MP FROM ACTIVE WAVE
-  =============================== */
-
+    /* STEP 1: GET PLAYER HP / MP
+    =============================== */
     const ACTIVE_WAVE_URL = '/active_wave.php?gate=3&wave=3';
 
     async function getPlayerStats() {
-        // 0) Prefer a local read if the current page already has HP/MP lines
         const local = tryReadHpMpFromCurrentPage();
         if (local && local.length) return local;
 
-        // 1) Fetch to active wave: parse .player-resources
         try {
-            const res = await fetch(ACTIVE_WAVE_URL, { credentials: 'include' });
+            const res = await fetch(ACTIVE_WAVE_URL, {
+                credentials: 'include'
+            });
             if (!res.ok) return null;
 
             const html = await res.text();
@@ -5030,9 +5388,11 @@ function initNavOrderUI({ onSave, onReset }) {
     }
 
     /* STEP 2: RENDER TO TOPBAR
-  =============================== */
-
+    =============================== */
     async function syncHpToTopbar() {
+
+        const isBattlePage = location.pathname.includes('/battle.php');
+
         const topbar = document.querySelector('.game-topbar');
         if (!topbar) return;
 
@@ -5043,7 +5403,6 @@ function initNavOrderUI({ onSave, onReset }) {
             topbar.appendChild(wrapper);
         }
 
-        // If empty, show a very light placeholder immediately using native bars
         const renderPlaceholderIfEmpty = () => {
             if (wrapper.hasChildNodes()) return;
 
@@ -5063,30 +5422,27 @@ function initNavOrderUI({ onSave, onReset }) {
 
         renderPlaceholderIfEmpty();
 
-        // Single-source player stats (local first, then active wave)
         const texts = await getPlayerStats();
-        if (!texts) {
-            // Keep placeholder; nothing to update
-            return;
-        }
+        if (!texts) return;
 
-        // Locate lines by keywords
         const hpText = texts.find((t) => /hp/i.test(t));
         const mpText = texts.find((t) => /mp|mana/i.test(t));
 
         wrapper.innerHTML = '';
 
-        // HP
+        /* ---- HP ---- */
         if (hpText) {
             const hp = parseCurrentMax(hpText);
-            if (hp && hp.max > 0) {
-                wrapper.appendChild(createNativeBar('hp', (hp.current / hp.max) * 100));
-            } else {
-                wrapper.appendChild(createNativeBar('hp', 0));
-            }
+            wrapper.appendChild(
+                createNativeBar('hp', hp && hp.max > 0 ? (hp.current / hp.max) * 100 : 0)
+            );
+
             const hpLine = document.createElement('div');
             hpLine.className = 'hp-text';
-            hpLine.textContent = `💚 ${hpText.replace(/^HP\s*/i, '')} HP`;
+            hpLine.textContent = isBattlePage ?
+                `${hpText.replace(/^HP\s*/i, '')} HP` :
+                `💚 ${hpText.replace(/^HP\s*/i, '')} HP`;
+
             wrapper.appendChild(hpLine);
         } else {
             wrapper.appendChild(createNativeBar('hp', 0));
@@ -5096,17 +5452,19 @@ function initNavOrderUI({ onSave, onReset }) {
             wrapper.appendChild(hpLine);
         }
 
-        // MP
+        /* ---- MP ---- */
         if (mpText) {
             const mp = parseCurrentMax(mpText);
-            if (mp && mp.max > 0) {
-                wrapper.appendChild(createNativeBar('mp', (mp.current / mp.max) * 100));
-            } else {
-                wrapper.appendChild(createNativeBar('mp', 0));
-            }
+            wrapper.appendChild(
+                createNativeBar('mp', mp && mp.max > 0 ? (mp.current / mp.max) * 100 : 0)
+            );
+
             const mpLine = document.createElement('div');
             mpLine.className = 'hp-text';
-            mpLine.textContent = `💠 ${mpText.replace(/^MP\s*/i, '')} MP`;
+            mpLine.textContent = isBattlePage ?
+                `${mpText.replace(/^MP\s*/i, '')} MP` :
+                `💠 ${mpText.replace(/^MP\s*/i, '')} MP`;
+
             wrapper.appendChild(mpLine);
         } else {
             wrapper.appendChild(createNativeBar('mp', 0));
@@ -5117,10 +5475,9 @@ function initNavOrderUI({ onSave, onReset }) {
         }
     }
 
-    /* STEP 3 (NEW): Bump space above container with the "⬅ Back" button
-  =============================== */
+    /* STEP 3: BACK BUTTON SPACING
+    =============================== */
     function adjustBackButtonSpacing(root = document) {
-        // Normalize function to compare text without excessive whitespace
         const normalize = (s) => (s || '').replace(/\s+/g, ' ').trim();
 
         const candidates = root.querySelectorAll('button, .btn, [role="button"]');
@@ -5128,11 +5485,9 @@ function initNavOrderUI({ onSave, onReset }) {
         for (const el of candidates) {
             const txt = normalize(el.textContent);
             if (txt === '⬅ Back' || txt === '⬅ Back to wave') {
-                // Find the nearest wrapping div that contains this button
                 let hostDiv = el.closest('div');
                 if (!hostDiv) continue;
 
-                // Prevent repeatedly adding the margin
                 if (!hostDiv.dataset.backMtApplied) {
                     hostDiv.style.marginTop = '20px';
                     hostDiv.dataset.backMtApplied = '1';
@@ -5142,30 +5497,52 @@ function initNavOrderUI({ onSave, onReset }) {
     }
 
     /* START
-  =============================== */
-    // Run once at load
+    =============================== */
     (async () => {
         await syncHpToTopbar();
         adjustBackButtonSpacing(document);
     })();
 
-    // Refresh after button-like actions
     if (!window.__hpSyncWired) {
         window.__hpSyncWired = true;
 
         const CLICK_REFRESH_DELAY = 250;
 
         const scheduleRefresh = () => {
-            setTimeout(() => {
-                try {
-                    const p = (async () => {
-                        await syncHpToTopbar();
-                        // Re-apply spacing in case the DOM changed
-                        adjustBackButtonSpacing(document);
-                    })();
-                    if (p && typeof p.catch === 'function') p.catch(() => {});
-                } catch (_) {}
-            }, CLICK_REFRESH_DELAY);
+
+            let attempts = 0;
+            const maxAttempts = 10; // tries for up to ~500ms
+            const interval = 50; // check every 50ms
+
+            const oldTexts = (() => {
+                const local = tryReadHpMpFromCurrentPage();
+                return local ? local.join('|') : null;
+            })();
+
+            const check = async () => {
+                attempts++;
+
+                const now = tryReadHpMpFromCurrentPage();
+                const joined = now ? now.join('|') : null;
+
+                // Stop when values actually changed
+                if (joined && joined !== oldTexts) {
+                    await syncHpToTopbar();
+                    adjustBackButtonSpacing(document);
+                    return;
+                }
+
+                // Retry for up to maxAttempts
+                if (attempts < maxAttempts) {
+                    setTimeout(check, interval);
+                } else {
+                    // final fallback if values never changed
+                    await syncHpToTopbar();
+                    adjustBackButtonSpacing(document);
+                }
+            };
+
+            setTimeout(check, interval);
         };
 
         document.addEventListener(
@@ -5195,21 +5572,22 @@ function initNavOrderUI({ onSave, onReset }) {
     }
 })();
 
-
-
 // to hide instajoin btn
-(function () {
-  'use strict';
+(function() {
+    'use strict';
 
-  function hideAll() {
-    document.querySelectorAll('.btn.gd-instant-join')
-      .forEach(btn => btn.style.display = 'none');
-  }
+    function hideAll() {
+        document.querySelectorAll('.btn.gd-instant-join')
+            .forEach(btn => btn.style.display = 'none');
+    }
 
-  hideAll();
+    hideAll();
 
-  const obs = new MutationObserver(hideAll);
-  obs.observe(document.documentElement, { childList: true, subtree: true });
+    const obs = new MutationObserver(hideAll);
+    obs.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+    });
 })();
 
 //quest windown modal
@@ -5217,7 +5595,7 @@ function initNavOrderUI({ onSave, onReset }) {
 //// Call once (recommended near script start)
 function injectQuestModalStyles() {
 
-  const css = `
+    const css = `
   /* ===== Modal overlay ===== */
   #tm-quest-modal-overlay {
     position: fixed;
@@ -5351,20 +5729,20 @@ function injectQuestModalStyles() {
     box-shadow: 0 6px 18px rgba(0,0,0,.25);
   }
   `;
-  if (typeof GM_addStyle === "function") GM_addStyle(css);
-  else {
-    const style = document.createElement('style');
-    style.textContent = css;
-    document.head.appendChild(style);
-  }
+    if (typeof GM_addStyle === "function") GM_addStyle(css);
+    else {
+        const style = document.createElement('style');
+        style.textContent = css;
+        document.head.appendChild(style);
+    }
 }
 
 function ensureQuestModal() {
-  if (document.getElementById('tm-quest-modal-overlay')) return;
+    if (document.getElementById('tm-quest-modal-overlay')) return;
 
-  const overlay = document.createElement('div');
-  overlay.id = 'tm-quest-modal-overlay';
-  overlay.innerHTML = `
+    const overlay = document.createElement('div');
+    overlay.id = 'tm-quest-modal-overlay';
+    overlay.innerHTML = `
     <div id="tm-quest-modal" role="dialog" aria-modal="true">
       <div class="hud-outer">
         <div class="hud-mid">
@@ -5388,116 +5766,134 @@ function ensureQuestModal() {
     </div>
   `;
 
-  document.body.appendChild(overlay);
+    document.body.appendChild(overlay);
 
-  // Close when clicking outside modal
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeQuestModal();
-  });
+    // Close when clicking outside modal
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeQuestModal();
+    });
 
-  // Close button
-  overlay.querySelector('#tm-modal-close').addEventListener('click', closeQuestModal);
+    // Close button
+    overlay.querySelector('#tm-modal-close').addEventListener('click', closeQuestModal);
 
-  // ESC close
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeQuestModal();
-  });
+    // ESC close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeQuestModal();
+    });
 }
 
 function openQuestModal(data) {
-  ensureQuestModal();
+    ensureQuestModal();
 
-  const overlay = document.getElementById('tm-quest-modal-overlay');
-  const setRow = (id, label, value) => {
-    const el = document.getElementById(id);
-    if (!value) { el.innerHTML = ''; return; }
-    el.innerHTML = `<span class="tm-modal-label">${label}</span>${escapeHtml(value)}`;
-  };
+    const overlay = document.getElementById('tm-quest-modal-overlay');
+    const setRow = (id, label, value) => {
+        const el = document.getElementById(id);
+        if (!value) {
+            el.innerHTML = '';
+            return;
+        }
+        el.innerHTML = `<span class="tm-modal-label">${label}</span>${escapeHtml(value)}`;
+    };
 
-  document.getElementById('tm-modal-title').textContent = data.title || 'Quest';
+    document.getElementById('tm-modal-title').textContent = data.title || 'Quest';
 
-  setRow('tm-modal-type', 'Type:', data.type);
-  setRow('tm-modal-desc', 'Details:', data.description || data.details);
-  setRow('tm-modal-reward', 'Reward:', data.reward);
-  setRow('tm-modal-progress', 'Progress:', data.progress);
-  setRow('tm-modal-time', 'Time Left:', data.timeLeft);
+    setRow('tm-modal-type', 'Type:', data.type);
+    setRow('tm-modal-desc', 'Details:', data.description || data.details);
+    setRow('tm-modal-reward', 'Reward:', data.reward);
+    setRow('tm-modal-progress', 'Progress:', data.progress);
+    setRow('tm-modal-time', 'Time Left:', data.timeLeft);
 
-  overlay.classList.add('show');
+    overlay.classList.add('show');
 }
 
 function closeQuestModal() {
-  const overlay = document.getElementById('tm-quest-modal-overlay');
-  if (overlay) overlay.classList.remove('show');
+    const overlay = document.getElementById('tm-quest-modal-overlay');
+    if (overlay) overlay.classList.remove('show');
 }
 
 //// Basic HTML escaping for safety
 function escapeHtml(str) {
-  if (str == null) return '';
-  return String(str)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
+    if (str == null) return '';
+    return String(str)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
 }
 
 //join timed mobs from the top of the page
-(function () {
-  'use strict';
+(function() {
+    'use strict';
 
-  /********************
-   * Helpers
-   ********************/
-  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    /********************
+     * Helpers
+     ********************/
+    const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
-  function isCurrentlyAlive(statusEl) {
-    // Only show button if the status text includes "Currently alive"
-    // (Handles emoji like ✅ and extra whitespace)
-    const t = norm(statusEl?.textContent);
-    return t.includes('currently alive');
-  }
-
-  function findMatchingMonsterCardByName(autoSummonName) {
-    const target = norm(autoSummonName);
-    if (!target) return null;
-
-    // Match .monster-card[data-name="..."]
-    const cards = document.querySelectorAll('.monster-card[data-name]');
-    for (const card of cards) {
-      const dn = norm(card.getAttribute('data-name'));
-      if (dn === target) return card;
-    }
-    return null;
-  }
-
-  function clickJoinOrContinue(monsterCard) {
-    if (!monsterCard) return false;
-
-    // 1) Prefer join-btn (not joined yet)
-    const joinBtn = monsterCard.querySelector('.join-btn');
-    if (joinBtn) {
-      monsterCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      joinBtn.click();
-      return { ok: true, mode: 'join' };
+    function isCurrentlyAlive(statusEl) {
+        // Only show button if the status text includes "Currently alive"
+        // (Handles emoji like ✅ and extra whitespace)
+        const t = norm(statusEl?.textContent);
+        return t.includes('currently alive');
     }
 
-    // 2) Fallback continue-btn (already joined)
-    const contBtn = monsterCard.querySelector('.continue-btn');
-    if (contBtn) {
-      monsterCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      contBtn.click();
-      return { ok: true, mode: 'continue' };
+    function findMatchingMonsterCardByName(autoSummonName) {
+        const target = norm(autoSummonName);
+        if (!target) return null;
+
+        // Match .monster-card[data-name="..."]
+        const cards = document.querySelectorAll('.monster-card[data-name]');
+        for (const card of cards) {
+            const dn = norm(card.getAttribute('data-name'));
+            if (dn === target) return card;
+        }
+        return null;
     }
 
-    return { ok: false, mode: null };
-  }
+    function clickJoinOrContinue(monsterCard) {
+        if (!monsterCard) return false;
 
-  function injectStylesOnce() {
-    if (document.getElementById('tm-summon-join-style')) return;
+        // 1) Prefer join-btn (not joined yet)
+        const joinBtn = monsterCard.querySelector('.join-btn');
+        if (joinBtn) {
+            monsterCard.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
+            joinBtn.click();
+            return {
+                ok: true,
+                mode: 'join'
+            };
+        }
 
-    const style = document.createElement('style');
-    style.id = 'tm-summon-join-style';
-    style.textContent = `
+        // 2) Fallback continue-btn (already joined)
+        const contBtn = monsterCard.querySelector('.continue-btn');
+        if (contBtn) {
+            monsterCard.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
+            contBtn.click();
+            return {
+                ok: true,
+                mode: 'continue'
+            };
+        }
+
+        return {
+            ok: false,
+            mode: null
+        };
+    }
+
+    function injectStylesOnce() {
+        if (document.getElementById('tm-summon-join-style')) return;
+
+        const style = document.createElement('style');
+        style.id = 'tm-summon-join-style';
+        style.textContent = `
       .tm-summon-action-wrap{
         display:inline-flex;
         align-items:center;
@@ -5519,76 +5915,81 @@ function escapeHtml(str) {
       .tm-summon-action-btn:active{ transform:translateY(1px); }
       .tm-summon-action-btn[disabled]{ opacity:.55; cursor:not-allowed; }
     `;
-    document.head.appendChild(style);
-  }
-
-  function enhance() {
-    injectStylesOnce();
-
-    const autoCards = document.querySelectorAll('.auto-summon-card');
-    for (const autoCard of autoCards) {
-      const nameEl = autoCard.querySelector('.auto-summon-name');
-      const statusEl = autoCard.querySelector('.auto-summon-status');
-
-      if (!nameEl || !statusEl) continue;
-
-      // Filter: only if status says "Currently alive"
-      if (!isCurrentlyAlive(statusEl)) continue;
-
-      // Avoid duplicates
-      if (autoCard.querySelector('.tm-summon-action-btn')) continue;
-
-      const autoName = nameEl.textContent;
-      const monsterCard = findMatchingMonsterCardByName(autoName);
-      if (!monsterCard) continue;
-
-      // Build button and insert next to status
-      const wrap = document.createElement('span');
-      wrap.className = 'tm-summon-action-wrap';
-
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'tm-summon-action-btn';
-      btn.textContent = 'Join';
-
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        btn.disabled = true;
-
-        const res = clickJoinOrContinue(monsterCard);
-        if (!res.ok) {
-          console.warn('[TM] No .join-btn or .continue-btn found for:', autoName);
-          btn.disabled = false;
-          return;
-        }
-
-        // Optional: update label depending on what was clicked
-        btn.textContent = (res.mode === 'continue') ? 'Continue' : 'Join';
-
-        // Re-enable after a short delay (in case UI updates)
-        setTimeout(() => { btn.disabled = false; }, 1200);
-      });
-
-      wrap.appendChild(btn);
-      statusEl.insertAdjacentElement('afterend', wrap);
+        document.head.appendChild(style);
     }
-  }
 
-  /********************
-   * Run + Observe
-   ********************/
-  let t = null;
-  const schedule = () => {
-    clearTimeout(t);
-    t = setTimeout(enhance, 120);
-  };
+    function enhance() {
+        injectStylesOnce();
 
-  schedule();
+        const autoCards = document.querySelectorAll('.auto-summon-card');
+        for (const autoCard of autoCards) {
+            const nameEl = autoCard.querySelector('.auto-summon-name');
+            const statusEl = autoCard.querySelector('.auto-summon-status');
 
-  const obs = new MutationObserver(schedule);
-  obs.observe(document.documentElement, { childList: true, subtree: true });
+            if (!nameEl || !statusEl) continue;
+
+            // Filter: only if status says "Currently alive"
+            if (!isCurrentlyAlive(statusEl)) continue;
+
+            // Avoid duplicates
+            if (autoCard.querySelector('.tm-summon-action-btn')) continue;
+
+            const autoName = nameEl.textContent;
+            const monsterCard = findMatchingMonsterCardByName(autoName);
+            if (!monsterCard) continue;
+
+            // Build button and insert next to status
+            const wrap = document.createElement('span');
+            wrap.className = 'tm-summon-action-wrap';
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'tm-summon-action-btn';
+            btn.textContent = 'Join';
+
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                btn.disabled = true;
+
+                const res = clickJoinOrContinue(monsterCard);
+                if (!res.ok) {
+                    console.warn('[TM] No .join-btn or .continue-btn found for:', autoName);
+                    btn.disabled = false;
+                    return;
+                }
+
+                // Optional: update label depending on what was clicked
+                btn.textContent = (res.mode === 'continue') ? 'Continue' : 'Join';
+
+                // Re-enable after a short delay (in case UI updates)
+                setTimeout(() => {
+                    btn.disabled = false;
+                }, 1200);
+            });
+
+            wrap.appendChild(btn);
+            statusEl.insertAdjacentElement('afterend', wrap);
+        }
+    }
+
+    /********************
+     * Run + Observe
+     ********************/
+    let t = null;
+    const schedule = () => {
+        clearTimeout(t);
+        t = setTimeout(enhance, 120);
+    };
+
+    schedule();
+
+    const obs = new MutationObserver(schedule);
+    obs.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+    });
 })();
 
 //go top
@@ -5629,7 +6030,10 @@ function escapeHtml(str) {
 
     // Scroll action
     btn.addEventListener("click", () => {
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        window.scrollTo({
+            top: 0,
+            behavior: "smooth"
+        });
     });
 
     // Show/hide on scroll
@@ -5645,430 +6049,451 @@ function escapeHtml(str) {
 })();
 
 //dungeon mobs damage dealt
-(function () {
+(function() {
     if (!vv.isOn('dungeon_dmg_pills')) return;
-  'use strict';
+    'use strict';
 
-  /** ---------- Config ---------- */
-  const CONCURRENCY = 6;        // max parallel requests
-  const CACHE_TTL_MS = 0; 		// cache life
-  const MIN_JITTER = 40;        // ms
-  const MAX_JITTER = 140;       // ms
+    /** ---------- Config ---------- */
+    const CONCURRENCY = 6; // max parallel requests
+    const CACHE_TTL_MS = 0; // cache life
+    const MIN_JITTER = 40; // ms
+    const MAX_JITTER = 140; // ms
 
-  /** ---------- Utils ---------- */
-  const sleep = (ms) => new Promise(res => setTimeout(res, ms));
-  const jitter = () => MIN_JITTER + Math.random() * (MAX_JITTER - MIN_JITTER);
+    /** ---------- Utils ---------- */
+    const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+    const jitter = () => MIN_JITTER + Math.random() * (MAX_JITTER - MIN_JITTER);
 
-  function getInstanceIdFromPage() {
-    try {
-      return new URL(location.href).searchParams.get('instance_id') || '';
-    } catch { return ''; }
-  }
-
-  function safeUrlParam(href, key) {
-    try { return new URL(href, location.origin).searchParams.get(key); }
-    catch { return null; }
-  }
-
-  function fetchHtml(url) {
-    return new Promise((resolve, reject) => {
-      if (typeof GM_xmlhttpRequest === 'function') {
-        GM_xmlhttpRequest({
-          method: 'GET',
-          url,
-          anonymous: false,
-          onload: (resp) => {
-            if (resp.status >= 200 && resp.status < 300) resolve(resp.responseText);
-            else reject(new Error(`HTTP ${resp.status}`));
-          },
-          onerror: reject,
-          ontimeout: () => reject(new Error('Timeout')),
-        });
-      } else {
-        fetch(url, { credentials: 'include' })
-          .then(r => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
-          .then(resolve, reject);
-      }
-    });
-  }
-
-  function parseDamageFromBattleHTML(html) {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const el = doc.querySelector('#yourDamageValue');
-    return el ? el.textContent.trim() : null;
-  }
-
-  function createDamagePill(initialText) {
-    const pill = document.createElement('div');
-    pill.className = 'statpill';
-    pill.title = 'Damage dealt';
-    // Minimal inline style to look okay anywhere
-    pill.style.cssText = 'display:inline-flex;gap:6px;align-items:center;margin-left:6px;';
-
-    const icon = document.createElement('span');
-    icon.textContent = '⚔️';
-
-    const k = document.createElement('span');
-    k.className = 'k';
-    k.style.opacity = '0.75';
-    k.textContent = 'dmg';
-
-    const v = document.createElement('span');
-    v.className = 'v';
-    v.textContent = initialText;
-
-    pill.append(icon, k, v);
-    return pill;
-  }
-
-  function extractDgmidFromMon(monEl) {
-    // Prefer clean checkbox
-    const ck = monEl.querySelector('input.wave-addon-pick-monster[data-mid]');
-    if (ck?.dataset?.mid) return ck.dataset.mid;
-
-    // Fallback: any link that has dgmid
-    const a = monEl.querySelector('a[href*="dgmid="]');
-    if (a) {
-      const val = safeUrlParam(a.href, 'dgmid');
-      if (val) return val;
-      const raw = a.getAttribute('href') || '';
-      const m = raw.match(/[?&]dgmid=(\d+)/);
-      if (m) return m[1];
-    }
-    return null;
-  }
-
-  function extractInstanceIdFromMon(monEl) {
-    const a = monEl.querySelector('a[href*="instance_id="]');
-    if (a) {
-      const val = safeUrlParam(a.href, 'instance_id');
-      if (val) return val;
-      const raw = a.getAttribute('href') || '';
-      const m = raw.match(/[?&]instance_id=(\d+)/);
-      if (m) return m[1];
-    }
-    return null;
-  }
-
-  /** ---------- Cache (sessionStorage + in-memory) ---------- */
-  const memCache = new Map(); // key -> { val, ts }
-
-  function cacheKey(dgmid, instanceId) {
-    return `dmg:${dgmid}:${instanceId}`;
-  }
-
-  function cacheGet(dgmid, instanceId) {
-    const key = cacheKey(dgmid, instanceId);
-    const now = Date.now();
-
-    // in-memory
-    const mem = memCache.get(key);
-    if (mem && now - mem.ts < CACHE_TTL_MS) return mem.val;
-
-    // sessionStorage
-    try {
-      const raw = sessionStorage.getItem(key);
-      if (raw) {
-        const obj = JSON.parse(raw);
-        if (now - obj.ts < CACHE_TTL_MS) {
-          memCache.set(key, obj);
-          return obj.val;
-        }
-      }
-    } catch {}
-    return null;
-  }
-
-  function cacheSet(dgmid, instanceId, val) {
-    const key = cacheKey(dgmid, instanceId);
-    const entry = { val, ts: Date.now() };
-    memCache.set(key, entry);
-    try {
-      sessionStorage.setItem(key, JSON.stringify(entry));
-    } catch {}
-  }
-
-  /** ---------- Request de-duplication ---------- */
-  const inFlight = new Map(); // url -> Promise<string>
-
-  function fetchBattlePageOnce(url) {
-    if (inFlight.has(url)) return inFlight.get(url);
-    const p = fetchHtml(url)
-      .finally(() => inFlight.delete(url));
-    inFlight.set(url, p);
-    return p;
-  }
-
-  /** ---------- Concurrency pool ---------- */
-  async function runWithLimit(items, limit, worker) {
-    const results = new Array(items.length);
-    let i = 0;
-    const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-      while (i < items.length) {
-        const idx = i++;
+    function getInstanceIdFromPage() {
         try {
-          results[idx] = await worker(items[idx], idx);
-        } catch (e) {
-          results[idx] = e;
+            return new URL(location.href).searchParams.get('instance_id') || '';
+        } catch {
+            return '';
         }
-      }
-    });
-    await Promise.all(runners);
-    return results;
-  }
-
-  /** ---------- Main per-card processing ---------- */
-  const processed = new WeakSet();
-
-  function ensureDamagePill(monEl, initial = '…') {
-    let pill = monEl.querySelector('.statrow .statpill[title="Damage dealt"]');
-    if (pill) return pill;
-
-    const row = monEl.querySelector('.statrow');
-    if (!row) return null;
-
-    pill = createDamagePill(initial);
-    row.appendChild(pill);
-    return pill;
-  }
-
-  function buildBattleUrl(dgmid, instanceId) {
-    return `https://demonicscans.org/battle.php?dgmid=${encodeURIComponent(dgmid)}&instance_id=${encodeURIComponent(instanceId)}`;
-  }
-
-  function collectMonsters() {
-    const pageInstanceId = getInstanceIdFromPage();
-    const mons = Array.from(document.querySelectorAll('div.mon'));
-    const jobs = [];
-
-    for (const monEl of mons) {
-      if (processed.has(monEl)) continue;
-      processed.add(monEl);
-
-      const statRow = monEl.querySelector('.statrow');
-      if (!statRow) continue;
-
-      const dgmid = extractDgmidFromMon(monEl);
-      const instanceId = pageInstanceId || extractInstanceIdFromMon(monEl) || '';
-
-      const pill = ensureDamagePill(monEl, dgmid && instanceId ? '…' : '—');
-
-      if (!dgmid || !instanceId || !pill) continue;
-
-      jobs.push({
-        monEl, pill, dgmid, instanceId,
-        url: buildBattleUrl(dgmid, instanceId)
-      });
-    }
-    return jobs;
-  }
-
-  async function processJob(job) {
-    const { pill, dgmid, instanceId, url } = job;
-
-    // Cache hit?
-    const cached = cacheGet(dgmid, instanceId);
-    if (cached) {
-      const v = pill.querySelector('.v');
-      if (v) v.textContent = cached;
-      return;
     }
 
-    // Small randomized jitter so we don't hammer in a perfect burst
-    await sleep(jitter());
-
-    try {
-      const html = await fetchBattlePageOnce(url);
-      const dmg = parseDamageFromBattleHTML(html) || '—';
-      cacheSet(dgmid, instanceId, dmg);
-      const v = pill.querySelector('.v');
-      if (v) v.textContent = dmg;
-    } catch {
-      const v = pill.querySelector('.v');
-      if (v) v.textContent = '—';
-      // soft backoff: avoid immediate retries; cache negative for a short time
-      cacheSet(dgmid, instanceId, '—');
+    function safeUrlParam(href, key) {
+        try {
+            return new URL(href, location.origin).searchParams.get(key);
+        } catch {
+            return null;
+        }
     }
-  }
 
-  async function processAllParallel() {
-    const jobs = collectMonsters();
-    if (jobs.length === 0) return;
+    function fetchHtml(url) {
+        return new Promise((resolve, reject) => {
+            if (typeof GM_xmlhttpRequest === 'function') {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url,
+                    anonymous: false,
+                    onload: (resp) => {
+                        if (resp.status >= 200 && resp.status < 300) resolve(resp.responseText);
+                        else reject(new Error(`HTTP ${resp.status}`));
+                    },
+                    onerror: reject,
+                    ontimeout: () => reject(new Error('Timeout')),
+                });
+            } else {
+                fetch(url, {
+                        credentials: 'include'
+                    })
+                    .then(r => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+                    .then(resolve, reject);
+            }
+        });
+    }
 
-    await runWithLimit(jobs, CONCURRENCY, processJob);
-  }
+    function parseDamageFromBattleHTML(html) {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const el = doc.querySelector('#yourDamageValue');
+        return el ? el.textContent.trim() : null;
+    }
 
-  function setupObserver() {
-    const obs = new MutationObserver(() => {
-      // Gather only new, unprocessed monsters and schedule them
-      const jobs = collectMonsters();
-      if (jobs.length === 0) return;
-      runWithLimit(jobs, CONCURRENCY, processJob).catch(() => {});
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
-  }
+    function createDamagePill(initialText) {
+        const pill = document.createElement('div');
+        pill.className = 'statpill';
+        pill.title = 'Damage dealt';
+        // Minimal inline style to look okay anywhere
+        pill.style.cssText = 'display:inline-flex;gap:6px;align-items:center;margin-left:6px;';
 
-  (async () => {
-    await processAllParallel();
-    setupObserver();
-  })();
+        const icon = document.createElement('span');
+        icon.textContent = '⚔️';
+
+        const k = document.createElement('span');
+        k.className = 'k';
+        k.style.opacity = '0.75';
+        k.textContent = 'dmg';
+
+        const v = document.createElement('span');
+        v.className = 'v';
+        v.textContent = initialText;
+
+        pill.append(icon, k, v);
+        return pill;
+    }
+
+    function extractDgmidFromMon(monEl) {
+        // Prefer clean checkbox
+        const ck = monEl.querySelector('input.wave-addon-pick-monster[data-mid]');
+        if (ck?.dataset?.mid) return ck.dataset.mid;
+
+        // Fallback: any link that has dgmid
+        const a = monEl.querySelector('a[href*="dgmid="]');
+        if (a) {
+            const val = safeUrlParam(a.href, 'dgmid');
+            if (val) return val;
+            const raw = a.getAttribute('href') || '';
+            const m = raw.match(/[?&]dgmid=(\d+)/);
+            if (m) return m[1];
+        }
+        return null;
+    }
+
+    function extractInstanceIdFromMon(monEl) {
+        const a = monEl.querySelector('a[href*="instance_id="]');
+        if (a) {
+            const val = safeUrlParam(a.href, 'instance_id');
+            if (val) return val;
+            const raw = a.getAttribute('href') || '';
+            const m = raw.match(/[?&]instance_id=(\d+)/);
+            if (m) return m[1];
+        }
+        return null;
+    }
+
+    /** ---------- Cache (sessionStorage + in-memory) ---------- */
+    const memCache = new Map(); // key -> { val, ts }
+
+    function cacheKey(dgmid, instanceId) {
+        return `dmg:${dgmid}:${instanceId}`;
+    }
+
+    function cacheGet(dgmid, instanceId) {
+        const key = cacheKey(dgmid, instanceId);
+        const now = Date.now();
+
+        // in-memory
+        const mem = memCache.get(key);
+        if (mem && now - mem.ts < CACHE_TTL_MS) return mem.val;
+
+        // sessionStorage
+        try {
+            const raw = sessionStorage.getItem(key);
+            if (raw) {
+                const obj = JSON.parse(raw);
+                if (now - obj.ts < CACHE_TTL_MS) {
+                    memCache.set(key, obj);
+                    return obj.val;
+                }
+            }
+        } catch {}
+        return null;
+    }
+
+    function cacheSet(dgmid, instanceId, val) {
+        const key = cacheKey(dgmid, instanceId);
+        const entry = {
+            val,
+            ts: Date.now()
+        };
+        memCache.set(key, entry);
+        try {
+            sessionStorage.setItem(key, JSON.stringify(entry));
+        } catch {}
+    }
+
+    /** ---------- Request de-duplication ---------- */
+    const inFlight = new Map(); // url -> Promise<string>
+
+    function fetchBattlePageOnce(url) {
+        if (inFlight.has(url)) return inFlight.get(url);
+        const p = fetchHtml(url)
+            .finally(() => inFlight.delete(url));
+        inFlight.set(url, p);
+        return p;
+    }
+
+    /** ---------- Concurrency pool ---------- */
+    async function runWithLimit(items, limit, worker) {
+        const results = new Array(items.length);
+        let i = 0;
+        const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+            while (i < items.length) {
+                const idx = i++;
+                try {
+                    results[idx] = await worker(items[idx], idx);
+                } catch (e) {
+                    results[idx] = e;
+                }
+            }
+        });
+        await Promise.all(runners);
+        return results;
+    }
+
+    /** ---------- Main per-card processing ---------- */
+    const processed = new WeakSet();
+
+    function ensureDamagePill(monEl, initial = '…') {
+        let pill = monEl.querySelector('.statrow .statpill[title="Damage dealt"]');
+        if (pill) return pill;
+
+        const row = monEl.querySelector('.statrow');
+        if (!row) return null;
+
+        pill = createDamagePill(initial);
+        row.appendChild(pill);
+        return pill;
+    }
+
+    function buildBattleUrl(dgmid, instanceId) {
+        return `https://demonicscans.org/battle.php?dgmid=${encodeURIComponent(dgmid)}&instance_id=${encodeURIComponent(instanceId)}`;
+    }
+
+    function collectMonsters() {
+        const pageInstanceId = getInstanceIdFromPage();
+        const mons = Array.from(document.querySelectorAll('div.mon'));
+        const jobs = [];
+
+        for (const monEl of mons) {
+            if (processed.has(monEl)) continue;
+            processed.add(monEl);
+
+            const statRow = monEl.querySelector('.statrow');
+            if (!statRow) continue;
+
+            const dgmid = extractDgmidFromMon(monEl);
+            const instanceId = pageInstanceId || extractInstanceIdFromMon(monEl) || '';
+
+            const pill = ensureDamagePill(monEl, dgmid && instanceId ? '…' : '—');
+
+            if (!dgmid || !instanceId || !pill) continue;
+
+            jobs.push({
+                monEl,
+                pill,
+                dgmid,
+                instanceId,
+                url: buildBattleUrl(dgmid, instanceId)
+            });
+        }
+        return jobs;
+    }
+
+    async function processJob(job) {
+        const {
+            pill,
+            dgmid,
+            instanceId,
+            url
+        } = job;
+
+        // Cache hit?
+        const cached = cacheGet(dgmid, instanceId);
+        if (cached) {
+            const v = pill.querySelector('.v');
+            if (v) v.textContent = cached;
+            return;
+        }
+
+        // Small randomized jitter so we don't hammer in a perfect burst
+        await sleep(jitter());
+
+        try {
+            const html = await fetchBattlePageOnce(url);
+            const dmg = parseDamageFromBattleHTML(html) || '—';
+            cacheSet(dgmid, instanceId, dmg);
+            const v = pill.querySelector('.v');
+            if (v) v.textContent = dmg;
+        } catch {
+            const v = pill.querySelector('.v');
+            if (v) v.textContent = '—';
+            // soft backoff: avoid immediate retries; cache negative for a short time
+            cacheSet(dgmid, instanceId, '—');
+        }
+    }
+
+    async function processAllParallel() {
+        const jobs = collectMonsters();
+        if (jobs.length === 0) return;
+
+        await runWithLimit(jobs, CONCURRENCY, processJob);
+    }
+
+    function setupObserver() {
+        const obs = new MutationObserver(() => {
+            // Gather only new, unprocessed monsters and schedule them
+            const jobs = collectMonsters();
+            if (jobs.length === 0) return;
+            runWithLimit(jobs, CONCURRENCY, processJob).catch(() => {});
+        });
+        obs.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    (async () => {
+        await processAllParallel();
+        setupObserver();
+    })();
 
 })();
 
 //dungeon loot/loot all
-(function () {
-  'use strict';
+(function() {
+    'use strict';
 
-  /* =========================================================
-     CONFIG — tweak selectors here if your markup changes
-     ========================================================= */
-  const SELECTORS = {
-    // Each monster row container
-    monsterRow: '.mon',
+    /* =========================================================
+       CONFIG — tweak selectors here if your markup changes
+       ========================================================= */
+    const SELECTORS = {
+        // Each monster row container
+        monsterRow: '.mon',
 
-    // Dead detection
-    deadClassOnRow: 'dead',     // <div class="mon dead">
-    deadPillSel: '.pill',       // also check any pill for text 'dead'
+        // Dead detection
+        deadClassOnRow: 'dead', // <div class="mon dead">
+        deadPillSel: '.pill', // also check any pill for text 'dead'
 
-    // Not-looted detection
-    notLootedPillSel: '.pill-warn',       // <span class="pill pill-warn">not looted</span>
-    anyPillSel: '.pill, .pill-warn',      // fallback: text contains "not looted"
+        // Not-looted detection
+        notLootedPillSel: '.pill-warn', // <span class="pill pill-warn">not looted</span>
+        anyPillSel: '.pill, .pill-warn', // fallback: text contains "not looted"
 
-    // Pull IDs from "View/Fight" anchor
-    anchorToId: 'a.btn[href*="dgmid="], a[href*="dgmid="]',
+        // Pull IDs from "View/Fight" anchor
+        anchorToId: 'a.btn[href*="dgmid="], a[href*="dgmid="]',
 
-    // Per-row button placement (after the LAST <a class="btn"> within the row)
-    actionLinksSel: 'a.btn',
+        // Per-row button placement (after the LAST <a class="btn"> within the row)
+        actionLinksSel: 'a.btn',
 
-    // Loot All button host (append as last child)
-    lootAllContainerQuery: '.panel .row'
-  };
+        // Loot All button host (append as last child)
+        lootAllContainerQuery: '.panel .row'
+    };
 
-  // Pacing & batch size for Loot All
-  const AUTO_LOOT_DELAY_MS   = 30;
-  const LOOT_ALL_CONCURRENCY = 15;
+    // Pacing & batch size for Loot All
+    const AUTO_LOOT_DELAY_MS = 30;
+    const LOOT_ALL_CONCURRENCY = 15;
 
-  /* =========================================================
-     Utility: Toast (brief notifications)
-     ========================================================= */
-  function toast(message, type = 'info') {
-    const box = document.createElement('div');
-    box.className = `tm-toast-${type}`;
-    box.style.cssText = `
+    /* =========================================================
+       Utility: Toast (brief notifications)
+       ========================================================= */
+    function toast(message, type = 'info') {
+        const box = document.createElement('div');
+        box.className = `tm-toast-${type}`;
+        box.style.cssText = `
       position: fixed; top: 20px; right: 20px; z-index: 2147483647;
       padding: 12px 16px; border-radius: 8px; color: #fff; font-size: 14px;
       background: ${type === 'success' ? '#28a745' : type === 'error' ? '#dc3545' : '#17a2b8'};
       box-shadow: 0 6px 20px rgba(0,0,0,.25);
     `;
-    box.textContent = message;
-    document.body.appendChild(box);
-    setTimeout(() => box.remove(), 3000);
-  }
-
-  /* =========================================================
-     Parse helpers
-     ========================================================= */
-  function normalize(text) {
-    return (text || '').trim().toLowerCase();
-  }
-
-  function getInstanceId() {
-    // 1) From page URL
-    try {
-      const p = new URLSearchParams(location.search);
-      const iid = p.get('instance_id');
-      if (iid) return iid;
-    } catch {}
-    // 2) Fallback: from any link in the page
-    const a = document.querySelector('a.btn[href*="instance_id="], a[href*="instance_id="]');
-    if (a) {
-      const href = a.getAttribute('href') || '';
-      const m = href.match(/[?&]instance_id=(\d+)/);
-      if (m) return m[1];
+        box.textContent = message;
+        document.body.appendChild(box);
+        setTimeout(() => box.remove(), 3000);
     }
-    return null;
-  }
 
-  function getInstanceIdFromRow(row) {
-    const a = row.querySelector('a.btn[href*="instance_id="], a[href*="instance_id="]');
-    if (!a) return null;
-    const href = a.getAttribute('href') || '';
-    const m = href.match(/[?&]instance_id=(\d+)/);
-    return m ? m[1] : null;
-  }
+    /* =========================================================
+       Parse helpers
+       ========================================================= */
+    function normalize(text) {
+        return (text || '').trim().toLowerCase();
+    }
 
-  function getMonsterIdFromRow(row) {
-    const a = row.querySelector(SELECTORS.anchorToId);
-    if (!a) return null;
-    const href = a.getAttribute('href') || '';
-    const m = href.match(/[?&]dgmid=(\d+)/);
-    return m ? m[1] : null;
-  }
+    function getInstanceId() {
+        // 1) From page URL
+        try {
+            const p = new URLSearchParams(location.search);
+            const iid = p.get('instance_id');
+            if (iid) return iid;
+        } catch {}
+        // 2) Fallback: from any link in the page
+        const a = document.querySelector('a.btn[href*="instance_id="], a[href*="instance_id="]');
+        if (a) {
+            const href = a.getAttribute('href') || '';
+            const m = href.match(/[?&]instance_id=(\d+)/);
+            if (m) return m[1];
+        }
+        return null;
+    }
 
-  function isRowDead(row) {
-    if (row.classList.contains(SELECTORS.deadClassOnRow)) return true;
-    const pills = row.querySelectorAll(SELECTORS.deadPillSel);
-    return [...pills].some(p => /\bdead\b/i.test((p.textContent || '').trim()));
-  }
+    function getInstanceIdFromRow(row) {
+        const a = row.querySelector('a.btn[href*="instance_id="], a[href*="instance_id="]');
+        if (!a) return null;
+        const href = a.getAttribute('href') || '';
+        const m = href.match(/[?&]instance_id=(\d+)/);
+        return m ? m[1] : null;
+    }
 
-  function isRowNotLooted(row) {
-    if (row.querySelector(SELECTORS.notLootedPillSel)) return true;
-    const pills = row.querySelectorAll(SELECTORS.anyPillSel);
-    return [...pills].some(p => /not\s*looted/i.test((p.textContent || '').trim()));
-  }
+    function getMonsterIdFromRow(row) {
+        const a = row.querySelector(SELECTORS.anchorToId);
+        if (!a) return null;
+        const href = a.getAttribute('href') || '';
+        const m = href.match(/[?&]dgmid=(\d+)/);
+        return m ? m[1] : null;
+    }
 
-  function isRowLootable(row) {
-    // Only show on DEAD + NOT LOOTED
-    return isRowDead(row) && isRowNotLooted(row);
-  }
+    function isRowDead(row) {
+        if (row.classList.contains(SELECTORS.deadClassOnRow)) return true;
+        const pills = row.querySelectorAll(SELECTORS.deadPillSel);
+        return [...pills].some(p => /\bdead\b/i.test((p.textContent || '').trim()));
+    }
 
-  /* =========================================================
-     Summary modal + items grid (reused for per-row & Loot All)
-     ========================================================= */
-  const ITEM_TIER_COLORS = {
-    COMMON: '#7f8c8d',
-    UNCOMMON: '#2ecc71',
-    RARE: '#9b59b6',
-    EPIC: '#e67e22',
-    LEGENDARY: '#f1c40f'
-  };
-  const DEFAULT_TIER_COLOR = '#ffffff';
+    function isRowNotLooted(row) {
+        if (row.querySelector(SELECTORS.notLootedPillSel)) return true;
+        const pills = row.querySelectorAll(SELECTORS.anyPillSel);
+        return [...pills].some(p => /not\s*looted/i.test((p.textContent || '').trim()));
+    }
 
-  const lootState = {
-    items: {},  // ITEM_ID -> { name, image, tier, count }
-    exp: 0,
-    gold: 0,
-    mobs: 0,
-    zeroMobs: 0,
-    failed: 0
-  };
+    function isRowLootable(row) {
+        // Only show on DEAD + NOT LOOTED
+        return isRowDead(row) && isRowNotLooted(row);
+    }
 
-  function resetLootState() {
-    lootState.items = {};
-    lootState.exp   = 0;
-    lootState.gold  = 0;
-    lootState.mobs  = 0;
-    lootState.zeroMobs = 0;
-    lootState.failed   = 0;
-  }
+    /* =========================================================
+       Summary modal + items grid (reused for per-row & Loot All)
+       ========================================================= */
+    const ITEM_TIER_COLORS = {
+        COMMON: '#7f8c8d',
+        UNCOMMON: '#2ecc71',
+        RARE: '#9b59b6',
+        EPIC: '#e67e22',
+        LEGENDARY: '#f1c40f'
+    };
+    const DEFAULT_TIER_COLOR = '#ffffff';
 
-  function showLootModal(headerText) {
-    document.getElementById('vv-loot-modal')?.remove();
-    const modal = document.createElement('div');
-    modal.id = 'vv-loot-modal';
-    modal.style.cssText = `
+    const lootState = {
+        items: {}, // ITEM_ID -> { name, image, tier, count }
+        exp: 0,
+        gold: 0,
+        mobs: 0,
+        zeroMobs: 0,
+        failed: 0
+    };
+
+    function resetLootState() {
+        lootState.items = {};
+        lootState.exp = 0;
+        lootState.gold = 0;
+        lootState.mobs = 0;
+        lootState.zeroMobs = 0;
+        lootState.failed = 0;
+    }
+
+    function showLootModal(headerText) {
+        document.getElementById('vv-loot-modal')?.remove();
+        const modal = document.createElement('div');
+        modal.id = 'vv-loot-modal';
+        modal.style.cssText = `
       position:fixed;inset:0;background:rgba(0,0,0,0.6);
       z-index:100000;display:flex;align-items:center;justify-content:center;
     `;
-    const box = document.createElement('div');
-    box.style.cssText = `
+        const box = document.createElement('div');
+        box.style.cssText = `
       background:#2a2a3d;border-radius:12px;padding:20px;
       max-width:92%;width:440px;text-align:center;color:white;
       overflow-y:auto;overflow-x:hidden;max-height:82%;
       box-shadow:0 10px 40px rgba(0,0,0,.45);
       font-family:Arial,sans-serif;
     `;
-    box.innerHTML = `
+        box.innerHTML = `
       <h2 style="margin:0 0 12px 0;">${headerText || '🎁 Loot Gained'}</h2>
       <div id="vv-loot-progress" style="font-size:12px;color:#c7c7d8;margin-bottom:10px;">
         Initializing...
@@ -6089,341 +6514,416 @@ function escapeHtml(str) {
         Close
       </button>
     `;
-    modal.appendChild(box);
-    document.body.appendChild(modal);
-    document.getElementById('vv-loot-close').onclick = () => modal.remove();
-  }
+        modal.appendChild(box);
+        document.body.appendChild(modal);
+        document.getElementById('vv-loot-close').onclick = () => modal.remove();
+    }
 
-  function upsertItemSlot(itemsWrap, item) {
-    const itemId = String(item.ITEM_ID ?? '').trim();
-    if (!itemId) return;
+    function upsertItemSlot(itemsWrap, item) {
+        const itemId = String(item.ITEM_ID ?? '').trim();
+        if (!itemId) return;
 
-    const rec = lootState.items[itemId];
-    const currentCount = rec?.count ?? 0;
-    const color = ITEM_TIER_COLORS[item.TIER] || DEFAULT_TIER_COLOR;
+        const rec = lootState.items[itemId];
+        const currentCount = rec?.count ?? 0;
+        const color = ITEM_TIER_COLORS[item.TIER] || DEFAULT_TIER_COLOR;
 
-    let slot = itemsWrap.querySelector(`[data-item-id="${CSS.escape(itemId)}"]`);
-    if (!slot) {
-      slot = document.createElement('div');
-      slot.dataset.itemId = itemId;
-      slot.style.cssText = `
+        let slot = itemsWrap.querySelector(`[data-item-id="${CSS.escape(itemId)}"]`);
+        if (!slot) {
+            slot = document.createElement('div');
+            slot.dataset.itemId = itemId;
+            slot.style.cssText = `
         width:96px; display:flex; flex-direction:column;
         align-items:center; text-align:center; box-sizing:border-box;
       `;
 
-      const imgWrap = document.createElement('div');
-      imgWrap.style.cssText = 'position:relative;width:64px;height:64px;';
+            const imgWrap = document.createElement('div');
+            imgWrap.style.cssText = 'position:relative;width:64px;height:64px;';
 
-      const img = document.createElement('img');
-      img.src = item.IMAGE_URL;
-      img.alt = item.NAME || '';
-      img.style.cssText = `
+            const img = document.createElement('img');
+            img.src = item.IMAGE_URL;
+            img.alt = item.NAME || '';
+            img.style.cssText = `
         width:64px;height:64px;border-radius:4px;
         border:2px solid ${color}; display:block;
       `;
 
-      const badge = document.createElement('span');
-      badge.className = 'vv-item-count';
-      badge.textContent = `x${currentCount}`;
-      badge.style.cssText = `
+            const badge = document.createElement('span');
+            badge.className = 'vv-item-count';
+            badge.textContent = `x${currentCount}`;
+            badge.style.cssText = `
         position:absolute; right:-6px; bottom:-6px;
         background:rgba(0,0,0,0.75); color:white; font-size:12px; font-weight:bold;
         padding:1px 6px; border-radius:6px; line-height:1.2;
       `;
 
-      imgWrap.appendChild(img);
-      imgWrap.appendChild(badge);
+            imgWrap.appendChild(img);
+            imgWrap.appendChild(badge);
 
-      const textWrap = document.createElement('div');
-      textWrap.style.cssText = 'margin-top:6px;width:100%;line-height:1.1;';
+            const textWrap = document.createElement('div');
+            textWrap.style.cssText = 'margin-top:6px;width:100%;line-height:1.1;';
 
-      const nameDiv = document.createElement('div');
-      nameDiv.textContent = item.NAME || 'Unknown';
-      nameDiv.style.cssText = `
+            const nameDiv = document.createElement('div');
+            nameDiv.textContent = item.NAME || 'Unknown';
+            nameDiv.style.cssText = `
         font-size:13px;font-weight:bold;color:white;
         overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
       `;
 
-      const tierDiv = document.createElement('div');
-      tierDiv.textContent = item.TIER || '';
-      tierDiv.style.cssText = `
+            const tierDiv = document.createElement('div');
+            tierDiv.textContent = item.TIER || '';
+            tierDiv.style.cssText = `
         font-size:10px;font-weight:bold;color:${color};margin-top:2px;
       `;
 
-      textWrap.appendChild(nameDiv);
-      textWrap.appendChild(tierDiv);
+            textWrap.appendChild(nameDiv);
+            textWrap.appendChild(tierDiv);
 
-      slot.appendChild(imgWrap);
-      slot.appendChild(textWrap);
+            slot.appendChild(imgWrap);
+            slot.appendChild(textWrap);
 
-      itemsWrap.appendChild(slot);
-      return;
+            itemsWrap.appendChild(slot);
+            return;
+        }
+        const countEl = slot.querySelector('.vv-item-count');
+        if (countEl) countEl.textContent = `x${currentCount}`;
+
+        const img = slot.querySelector('img');
+        if (img) img.style.borderColor = color;
     }
-    const countEl = slot.querySelector('.vv-item-count');
-    if (countEl) countEl.textContent = `x${currentCount}`;
 
-    const img = slot.querySelector('img');
-    if (img) img.style.borderColor = color;
-  }
-
-  function parseExpFromRaw(raw) {
-    const m = String(raw || '').match(/([0-9][0-9,\.]*)\s*EXP/i);
-    return m ? Number(m[1].replace(/[^0-9]/g, '')) : 0;
-  }
-
-  /* =========================================================
-     Transports (Dungeon-first, then Legacy)
-     ========================================================= */
-  function isLootSuccess({ json, text }) {
-    if (json?.success === 'success' || json?.status === 'success') return true;
-    if (/looted|claimed|success/i.test(String(text || ''))) return true;
-    return false;
-  }
-  function isLootAlready({ json, text }) {
-    if (String(json?.status || '').toLowerCase() === 'already') return true;
-    if (/already\s+claimed/i.test(String(text || ''))) return true;
-    return false;
-  }
-
-  async function postDungeonLoot(dgmid, instanceId) {
-    try {
-      const body = `dgmid=${encodeURIComponent(dgmid)}&instance_id=${encodeURIComponent(instanceId)}`;
-      const res = await fetch('dungeon_loot.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
-        body,
-        credentials: 'include',
-        referrer: location.href
-      });
-      const raw = await res.text();
-      let data = null; try { data = JSON.parse(raw); } catch {}
-      const ok = isLootSuccess({ json: data, text: raw });
-      const already = isLootAlready({ json: data, text: raw });
-      // rewards
-      const expGain = Number(data?.rewards?.exp || 0) || parseExpFromRaw(raw);
-      const goldGain = Number(data?.rewards?.gold || 0) || 0;
-      const items = Array.isArray(data?.items) ? data.items : [];
-      return { ok, already, expGain, goldGain, items, status: res.status, raw, data };
-    } catch (err) {
-      return { ok: false, already: false, expGain: 0, goldGain: 0, items: [], status: 0, raw: '', data: null };
+    function parseExpFromRaw(raw) {
+        const m = String(raw || '').match(/([0-9][0-9,\.]*)\s*EXP/i);
+        return m ? Number(m[1].replace(/[^0-9]/g, '')) : 0;
     }
-  }
 
-  async function postLegacyLoot(monsterId) {
-    try {
-      const body = `monster_id=${encodeURIComponent(monsterId)}`;
-      const res = await fetch('loot.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
-        body,
-        credentials: 'include',
-        referrer: location.href
-      });
-      const raw = await res.text();
-      let data = null; try { data = JSON.parse(raw); } catch {}
-      const ok = isLootSuccess({ json: data, text: raw });
-      const already = isLootAlready({ json: data, text: raw });
-      const expGain = parseExpFromRaw(raw);
-      const goldGain = Number(data?.rewards?.gold || 0) || 0;
-      const items = Array.isArray(data?.items) ? data.items : [];
-      return { ok, already, expGain, goldGain, items, status: res.status, raw, data };
-    } catch (err) {
-      return { ok: false, already: false, expGain: 0, goldGain: 0, items: [], status: 0, raw: '', data: null };
+    /* =========================================================
+       Transports (Dungeon-first, then Legacy)
+       ========================================================= */
+    function isLootSuccess({
+        json,
+        text
+    }) {
+        if (json?.success === 'success' || json?.status === 'success') return true;
+        if (/looted|claimed|success/i.test(String(text || ''))) return true;
+        return false;
     }
-  }
 
-  /* =========================================================
-     Unified modal looter (uses dungeon first if instance_id is present)
-     ========================================================= */
-  async function lootMonsterIds(monsterIds, opts = {}) {
-    const {
-      concurrency = LOOT_ALL_CONCURRENCY,
-      perLootDelayMs = AUTO_LOOT_DELAY_MS,
-      instanceId = null,
-      header = '🎁 Loot Gained'
-    } = opts;
+    function isLootAlready({
+        json,
+        text
+    }) {
+        if (String(json?.status || '').toLowerCase() === 'already') return true;
+        if (/already\s+claimed/i.test(String(text || ''))) return true;
+        return false;
+    }
 
-    resetLootState();
-    showLootModal(header);
+    async function postDungeonLoot(dgmid, instanceId) {
+        try {
+            const body = `dgmid=${encodeURIComponent(dgmid)}&instance_id=${encodeURIComponent(instanceId)}`;
+            const res = await fetch('dungeon_loot.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body,
+                credentials: 'include',
+                referrer: location.href
+            });
+            const raw = await res.text();
+            let data = null;
+            try {
+                data = JSON.parse(raw);
+            } catch {}
+            const ok = isLootSuccess({
+                json: data,
+                text: raw
+            });
+            const already = isLootAlready({
+                json: data,
+                text: raw
+            });
+            // rewards
+            const expGain = Number(data?.rewards?.exp || 0) || parseExpFromRaw(raw);
+            const goldGain = Number(data?.rewards?.gold || 0) || 0;
+            const items = Array.isArray(data?.items) ? data.items : [];
+            return {
+                ok,
+                already,
+                expGain,
+                goldGain,
+                items,
+                status: res.status,
+                raw,
+                data
+            };
+        } catch (err) {
+            return {
+                ok: false,
+                already: false,
+                expGain: 0,
+                goldGain: 0,
+                items: [],
+                status: 0,
+                raw: '',
+                data: null
+            };
+        }
+    }
 
-    const mobsEl  = document.getElementById('vv-loot-mobs');
-    const zeroEl  = document.getElementById('vv-loot-zero');
-    const expEl   = document.getElementById('vv-loot-exp');
-    const goldEl  = document.getElementById('vv-loot-gold');
-    const failEl  = document.getElementById('vv-loot-failed');
-    const itemsEl = document.getElementById('vv-loot-items');
-    const progEl  = document.getElementById('vv-loot-progress');
+    async function postLegacyLoot(monsterId) {
+        try {
+            const body = `monster_id=${encodeURIComponent(monsterId)}`;
+            const res = await fetch('loot.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body,
+                credentials: 'include',
+                referrer: location.href
+            });
+            const raw = await res.text();
+            let data = null;
+            try {
+                data = JSON.parse(raw);
+            } catch {}
+            const ok = isLootSuccess({
+                json: data,
+                text: raw
+            });
+            const already = isLootAlready({
+                json: data,
+                text: raw
+            });
+            const expGain = parseExpFromRaw(raw);
+            const goldGain = Number(data?.rewards?.gold || 0) || 0;
+            const items = Array.isArray(data?.items) ? data.items : [];
+            return {
+                ok,
+                already,
+                expGain,
+                goldGain,
+                items,
+                status: res.status,
+                raw,
+                data
+            };
+        } catch (err) {
+            return {
+                ok: false,
+                already: false,
+                expGain: 0,
+                goldGain: 0,
+                items: [],
+                status: 0,
+                raw: '',
+                data: null
+            };
+        }
+    }
 
-    const queue = monsterIds.map(String);
-    let totalAttempts = 0;
+    /* =========================================================
+       Unified modal looter (uses dungeon first if instance_id is present)
+       ========================================================= */
+    async function lootMonsterIds(monsterIds, opts = {}) {
+        const {
+            concurrency = LOOT_ALL_CONCURRENCY,
+                perLootDelayMs = AUTO_LOOT_DELAY_MS,
+                instanceId = null,
+                header = '🎁 Loot Gained'
+        } = opts;
 
-    const updateProgress = () => {
-      if (!progEl) return;
-      progEl.textContent = `Looting... ${totalAttempts}/${monsterIds.length}`;
-    };
+        resetLootState();
+        showLootModal(header);
 
-    updateProgress();
+        const mobsEl = document.getElementById('vv-loot-mobs');
+        const zeroEl = document.getElementById('vv-loot-zero');
+        const expEl = document.getElementById('vv-loot-exp');
+        const goldEl = document.getElementById('vv-loot-gold');
+        const failEl = document.getElementById('vv-loot-failed');
+        const itemsEl = document.getElementById('vv-loot-items');
+        const progEl = document.getElementById('vv-loot-progress');
 
-    const useDungeon = !!instanceId;
+        const queue = monsterIds.map(String);
+        let totalAttempts = 0;
 
-    async function worker() {
-      while (queue.length) {
-        const id = queue.shift();
-        if (!id) return;
+        const updateProgress = () => {
+            if (!progEl) return;
+            progEl.textContent = `Looting... ${totalAttempts}/${monsterIds.length}`;
+        };
 
-        totalAttempts++;
         updateProgress();
 
-        const r = useDungeon ? await postDungeonLoot(id, instanceId) : await postLegacyLoot(id);
+        const useDungeon = !!instanceId;
 
-        if (!(r.ok || r.already)) {
-          lootState.failed++;
-          if (failEl) failEl.textContent = lootState.failed.toLocaleString();
-          await new Promise(res => setTimeout(res, perLootDelayMs));
-          continue;
-        }
+        async function worker() {
+            while (queue.length) {
+                const id = queue.shift();
+                if (!id) return;
 
-        if (r.expGain > 0) {
-          lootState.mobs++;
-          lootState.exp += r.expGain;
-          if (mobsEl) mobsEl.textContent = lootState.mobs.toLocaleString();
-          if (expEl)  expEl.textContent  = lootState.exp.toLocaleString();
-        } else {
-          lootState.zeroMobs++;
-          if (zeroEl) zeroEl.textContent = lootState.zeroMobs.toLocaleString();
-        }
+                totalAttempts++;
+                updateProgress();
 
-        if (r.goldGain > 0) {
-          lootState.gold += r.goldGain;
-          if (goldEl) goldEl.textContent = lootState.gold.toLocaleString();
-        }
+                const r = useDungeon ? await postDungeonLoot(id, instanceId) : await postLegacyLoot(id);
 
-        if (Array.isArray(r.items)) {
-          for (const item of r.items) {
-            const key = String(item.ITEM_ID ?? '').trim();
-            if (key) {
-              if (!lootState.items[key]) {
-                lootState.items[key] = {
-                  name: item.NAME, image: item.IMAGE_URL, tier: item.TIER, count: 0
-                };
-              }
-              lootState.items[key].count += 1;
+                if (!(r.ok || r.already)) {
+                    lootState.failed++;
+                    if (failEl) failEl.textContent = lootState.failed.toLocaleString();
+                    await new Promise(res => setTimeout(res, perLootDelayMs));
+                    continue;
+                }
+
+                if (r.expGain > 0) {
+                    lootState.mobs++;
+                    lootState.exp += r.expGain;
+                    if (mobsEl) mobsEl.textContent = lootState.mobs.toLocaleString();
+                    if (expEl) expEl.textContent = lootState.exp.toLocaleString();
+                } else {
+                    lootState.zeroMobs++;
+                    if (zeroEl) zeroEl.textContent = lootState.zeroMobs.toLocaleString();
+                }
+
+                if (r.goldGain > 0) {
+                    lootState.gold += r.goldGain;
+                    if (goldEl) goldEl.textContent = lootState.gold.toLocaleString();
+                }
+
+                if (Array.isArray(r.items)) {
+                    for (const item of r.items) {
+                        const key = String(item.ITEM_ID ?? '').trim();
+                        if (key) {
+                            if (!lootState.items[key]) {
+                                lootState.items[key] = {
+                                    name: item.NAME,
+                                    image: item.IMAGE_URL,
+                                    tier: item.TIER,
+                                    count: 0
+                                };
+                            }
+                            lootState.items[key].count += 1;
+                        }
+                        if (itemsEl) upsertItemSlot(itemsEl, item);
+                    }
+                }
+
+                await new Promise(res => setTimeout(res, perLootDelayMs));
             }
-            if (itemsEl) upsertItemSlot(itemsEl, item);
-          }
         }
 
-        await new Promise(res => setTimeout(res, perLootDelayMs));
-      }
+        const workers = Array.from({
+            length: Math.max(1, concurrency)
+        }, () => worker());
+        await Promise.all(workers);
+
+        if (progEl) progEl.textContent = 'Done.';
+        return {
+            ...lootState
+        };
     }
 
-    const workers = Array.from({ length: Math.max(1, concurrency) }, () => worker());
-    await Promise.all(workers);
-
-    if (progEl) progEl.textContent = 'Done.';
-    return { ...lootState };
-  }
-
-  /* =========================================================
-     Per-row UI placement & behavior
-     ========================================================= */
-  function placeAfterLastActionLink(row, btnEl) {
-    const links = row.querySelectorAll(SELECTORS.actionLinksSel);
-    if (links.length) {
-      const last = links[links.length - 1];
-      btnEl.style.marginLeft = '8px';
-      last.insertAdjacentElement('afterend', btnEl);
-      return true;
-    }
-    return false;
-  }
-
-  function markRowAsLooted(row) {
-    // Change pill “not looted” -> “looted”
-    const pills = row.querySelectorAll('.pill, .pill-warn');
-    for (const p of pills) {
-      const t = normalize(p.textContent);
-      if (/not\s*looted/.test(t)) {
-        p.textContent = 'looted';
-        p.classList.remove('pill-warn');
-      }
-    }
-    // Replace a Loot button (if present) with a passive pill
-    const lootBtn = row.querySelector('.tm-loot-btn');
-    if (lootBtn) {
-      const done = document.createElement('span');
-      done.className = 'pill';
-      done.textContent = '💰 Looted';
-      lootBtn.replaceWith(done);
-    }
-  }
-
- function createLootButtonForRow(row) {
-    if (!isRowLootable(row)) return null;
-
-    const monsterId = getMonsterIdFromRow(row);
-    if (!monsterId) return null;
-
-    // Avoid duplicates
-    if (row.querySelector('.tm-loot-btn')) return null;
-
-    // Use <a class="btn"> to match native styling
-    const btn = document.createElement('a');
-    btn.href = "#";
-    btn.className = "btn tm-loot-btn";   // inherits all native styles
-    btn.textContent = "💰 Loot";
-
-    // Match native spacing with proper margin
-    btn.style.marginLeft = "6px";
-
-    btn.addEventListener("click", async (e) => {
-        e.preventDefault();
-        btn.style.pointerEvents = "none";
-        const iid = getInstanceIdFromRow(row) || getInstanceId() || null;
-
-        try {
-            await lootMonsterIds([monsterId], {
-                concurrency: 1,
-                perLootDelayMs: 0,
-                instanceId: iid,
-                header: "🎁 Loot Result"
-            });
-            markRowAsLooted(row);
-        } catch (err) {
-            console.error(err);
-            toast("Per-row loot failed. See console.", "error");
-        } finally {
-            // We do NOT re-enable pointerEvents because button gets replaced with pill
-            setTimeout(updateLootAllVisibility, 120);
+    /* =========================================================
+       Per-row UI placement & behavior
+       ========================================================= */
+    function placeAfterLastActionLink(row, btnEl) {
+        const links = row.querySelectorAll(SELECTORS.actionLinksSel);
+        if (links.length) {
+            const last = links[links.length - 1];
+            btnEl.style.marginLeft = '8px';
+            last.insertAdjacentElement('afterend', btnEl);
+            return true;
         }
-    });
+        return false;
+    }
 
-    // Insert after last <a.btn>
-    const placed = placeAfterLastActionLink(row, btn);
-    if (!placed) row.appendChild(btn);
+    function markRowAsLooted(row) {
+        // Change pill “not looted” -> “looted”
+        const pills = row.querySelectorAll('.pill, .pill-warn');
+        for (const p of pills) {
+            const t = normalize(p.textContent);
+            if (/not\s*looted/.test(t)) {
+                p.textContent = 'looted';
+                p.classList.remove('pill-warn');
+            }
+        }
+        // Replace a Loot button (if present) with a passive pill
+        const lootBtn = row.querySelector('.tm-loot-btn');
+        if (lootBtn) {
+            const done = document.createElement('span');
+            done.className = 'pill';
+            done.textContent = '💰 Looted';
+            lootBtn.replaceWith(done);
+        }
+    }
 
-    return btn;
-}
-  function addLootButtonsToAllRows() {
-    document.querySelectorAll(SELECTORS.monsterRow).forEach(row => createLootButtonForRow(row));
-    updateLootAllVisibility();
-  }
+    function createLootButtonForRow(row) {
+        if (!isRowLootable(row)) return null;
 
-  /* =========================================================
-     Loot All button behavior (append to first .panel .row)
-     ========================================================= */
-  let lootAllBtn = null;
+        const monsterId = getMonsterIdFromRow(row);
+        if (!monsterId) return null;
 
-  function ensureLootAllButton() {
-    if (lootAllBtn && lootAllBtn.isConnected) return lootAllBtn;
+        // Avoid duplicates
+        if (row.querySelector('.tm-loot-btn')) return null;
 
-    const container = document.querySelector(SELECTORS.lootAllContainerQuery);
-    if (!container) return null;
+        // Use <a class="btn"> to match native styling
+        const btn = document.createElement('a');
+        btn.href = "#";
+        btn.className = "btn tm-loot-btn"; // inherits all native styles
+        btn.textContent = "💰 Loot";
 
-    lootAllBtn = document.createElement('button');
-    lootAllBtn.id = 'tm-loot-all-btn';
-    lootAllBtn.textContent = '💰 Loot All';
-    lootAllBtn.style.cssText = `
+        // Match native spacing with proper margin
+        btn.style.marginLeft = "6px";
+
+        btn.addEventListener("click", async (e) => {
+            e.preventDefault();
+            btn.style.pointerEvents = "none";
+            const iid = getInstanceIdFromRow(row) || getInstanceId() || null;
+
+            try {
+                await lootMonsterIds([monsterId], {
+                    concurrency: 1,
+                    perLootDelayMs: 0,
+                    instanceId: iid,
+                    header: "🎁 Loot Result"
+                });
+                markRowAsLooted(row);
+            } catch (err) {
+                console.error(err);
+                toast("Per-row loot failed. See console.", "error");
+            } finally {
+                // We do NOT re-enable pointerEvents because button gets replaced with pill
+                setTimeout(updateLootAllVisibility, 120);
+            }
+        });
+
+        // Insert after last <a.btn>
+        const placed = placeAfterLastActionLink(row, btn);
+        if (!placed) row.appendChild(btn);
+
+        return btn;
+    }
+
+    function addLootButtonsToAllRows() {
+        document.querySelectorAll(SELECTORS.monsterRow).forEach(row => createLootButtonForRow(row));
+        updateLootAllVisibility();
+    }
+
+    /* =========================================================
+       Loot All button behavior (append to first .panel .row)
+       ========================================================= */
+    let lootAllBtn = null;
+
+    function ensureLootAllButton() {
+        if (lootAllBtn && lootAllBtn.isConnected) return lootAllBtn;
+
+        const container = document.querySelector(SELECTORS.lootAllContainerQuery);
+        if (!container) return null;
+
+        lootAllBtn = document.createElement('button');
+        lootAllBtn.id = 'tm-loot-all-btn';
+        lootAllBtn.textContent = '💰 Loot All';
+        lootAllBtn.style.cssText = `
       display:none; /* toggled by updateLootAllVisibility */
       margin-left: 8px;
       padding:8px 12px;border:0;border-radius:10px;cursor:pointer;
@@ -6431,82 +6931,92 @@ function escapeHtml(str) {
       box-shadow:0 6px 16px rgba(0,0,0,.25);
       align-self:center;
     `;
-    lootAllBtn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      lootAllBtn.disabled = true;
-      try {
-        // Gather all current lootable rows (or simply read IDs from buttons)
-        const rows = [...document.querySelectorAll(SELECTORS.monsterRow)];
-        const eligible = rows.filter(isRowLootable).map(r => ({ r, id: getMonsterIdFromRow(r) })).filter(x => !!x.id);
+        lootAllBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            lootAllBtn.disabled = true;
+            try {
+                // Gather all current lootable rows (or simply read IDs from buttons)
+                const rows = [...document.querySelectorAll(SELECTORS.monsterRow)];
+                const eligible = rows.filter(isRowLootable).map(r => ({
+                    r,
+                    id: getMonsterIdFromRow(r)
+                })).filter(x => !!x.id);
 
-        if (!eligible.length) {
-          toast('No dead & not-looted monsters found.', 'info');
-          updateLootAllVisibility();
-          return;
-        }
+                if (!eligible.length) {
+                    toast('No dead & not-looted monsters found.', 'info');
+                    updateLootAllVisibility();
+                    return;
+                }
 
-        const ids = eligible.map(x => x.id);
-        const iid = getInstanceId() || null;
+                const ids = eligible.map(x => x.id);
+                const iid = getInstanceId() || null;
 
-        await lootMonsterIds(ids, {
-          concurrency: LOOT_ALL_CONCURRENCY,
-          perLootDelayMs: AUTO_LOOT_DELAY_MS,
-          instanceId: iid,
-          header: '⚔️ Loot All'
+                await lootMonsterIds(ids, {
+                    concurrency: LOOT_ALL_CONCURRENCY,
+                    perLootDelayMs: AUTO_LOOT_DELAY_MS,
+                    instanceId: iid,
+                    header: '⚔️ Loot All'
+                });
+
+                // Mark rows as looted
+                for (const {
+                        r
+                    }
+                    of eligible) markRowAsLooted(r);
+            } catch (e2) {
+                console.error(e2);
+                toast('Batch loot failed. See console.', 'error');
+            } finally {
+                lootAllBtn.disabled = false;
+                setTimeout(updateLootAllVisibility, 150);
+            }
         });
 
-        // Mark rows as looted
-        for (const { r } of eligible) markRowAsLooted(r);
-      } catch (e2) {
-        console.error(e2);
-        toast('Batch loot failed. See console.', 'error');
-      } finally {
-        lootAllBtn.disabled = false;
-        setTimeout(updateLootAllVisibility, 150);
-      }
-    });
+        container.appendChild(lootAllBtn); // append as last child
+        return lootAllBtn;
+    }
 
-    container.appendChild(lootAllBtn); // append as last child
-    return lootAllBtn;
-  }
+    function updateLootAllVisibility() {
+        const btn = ensureLootAllButton();
+        if (!btn) return;
+        // Show if at least one per-row loot button exists
+        const anyLootBtn = !!document.querySelector('.tm-loot-btn');
+        btn.style.display = anyLootBtn ? 'inline-flex' : 'none';
+    }
 
-  function updateLootAllVisibility() {
-    const btn = ensureLootAllButton();
-    if (!btn) return;
-    // Show if at least one per-row loot button exists
-    const anyLootBtn = !!document.querySelector('.tm-loot-btn');
-    btn.style.display = anyLootBtn ? 'inline-flex' : 'none';
-  }
+    /* =========================================================
+       Observe & init
+       ========================================================= */
+    let debounceTimer = null;
 
-  /* =========================================================
-     Observe & init
-     ========================================================= */
-  let debounceTimer = null;
-  function observeForNewRows() {
-    const obs = new MutationObserver(() => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
+    function observeForNewRows() {
+        const obs = new MutationObserver(() => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                addLootButtonsToAllRows();
+                updateLootAllVisibility();
+            }, 120);
+        });
+        obs.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    function init() {
+        if (!/^\/guild_dungeon_location\.php/i.test(location.pathname)) return;
+
         addLootButtonsToAllRows();
+        ensureLootAllButton();
         updateLootAllVisibility();
-      }, 120);
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
-  }
+        observeForNewRows();
+    }
 
-  function init() {
-    if (!/^\/guild_dungeon_location\.php/i.test(location.pathname)) return;
-
-    addLootButtonsToAllRows();
-    ensureLootAllButton();
-    updateLootAllVisibility();
-    observeForNewRows();
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();
 
 //pet exp calculation
@@ -6602,56 +7112,56 @@ function escapeHtml(str) {
 })();
 
 //compress thedude's monster filter to dropdown
-(function () {
-  if (!vv.isOn('mob_filter_dropdown')) return;
-  'use strict';
+(function() {
+    if (!vv.isOn('mob_filter_dropdown')) return;
+    'use strict';
 
-  // ===== CONFIG =====
-  const CONTAINER_ID = 'wave-addon-monster-filter-container';
-  const LIST_ID = 'wave-addon-mob-filter';
-  const THEME = {
-    bg: 'rgba(17, 20, 35, 0.95)',
-    border: 'rgba(87, 103, 160, 0.35)',
-    text: 'rgb(230, 233, 255)',
-    hover: 'rgba(255, 255, 255, 0.06)',
-    accent: 'rgb(142, 160, 255)',
-    shadow: '0 8px 24px rgba(0,0,0,0.35)'
-  };
+    // ===== CONFIG =====
+    const CONTAINER_ID = 'wave-addon-monster-filter-container';
+    const LIST_ID = 'wave-addon-mob-filter';
+    const THEME = {
+        bg: 'rgba(17, 20, 35, 0.95)',
+        border: 'rgba(87, 103, 160, 0.35)',
+        text: 'rgb(230, 233, 255)',
+        hover: 'rgba(255, 255, 255, 0.06)',
+        accent: 'rgb(142, 160, 255)',
+        shadow: '0 8px 24px rgba(0,0,0,0.35)'
+    };
 
-  // Global one-shot guard
-  if (window.__mobFilterDropdownInit) return;
-  window.__mobFilterDropdownInit = true;
+    // Global one-shot guard
+    if (window.__mobFilterDropdownInit) return;
+    window.__mobFilterDropdownInit = true;
 
-  // ===== UTIL: wait for an element =====
-  function waitForEl(selector, timeout = 15000) {
-    return new Promise((resolve, reject) => {
-      const el = document.querySelector(selector);
-      if (el) return resolve(el);
+    // ===== UTIL: wait for an element =====
+    function waitForEl(selector, timeout = 15000) {
+        return new Promise((resolve, reject) => {
+            const el = document.querySelector(selector);
+            if (el) return resolve(el);
 
-      const obs = new MutationObserver(() => {
-        const e = document.querySelector(selector);
-        if (e) {
-          obs.disconnect();
-          resolve(e);
-        }
-      });
+            const obs = new MutationObserver(() => {
+                const e = document.querySelector(selector);
+                if (e) {
+                    obs.disconnect();
+                    resolve(e);
+                }
+            });
 
-      obs.observe(document.documentElement || document.body, {
-        childList: true,
-        subtree: true
-      });
+            obs.observe(document.documentElement || document.body, {
+                childList: true,
+                subtree: true
+            });
 
-      setTimeout(() => {
-        obs.disconnect();
-        reject(new Error(`Timeout waiting for ${selector}`));
-      }, timeout);
-    });
-  }
+            setTimeout(() => {
+                obs.disconnect();
+                reject(new Error(`Timeout waiting for ${selector}`));
+            }, timeout);
+        });
+    }
 
-  // ===== STYLE INJECTION =====
-  function injectStyles() {
-    if (document.getElementById('mob-filter-dropdown-styles')) return;
-    const css = `
+    // ===== STYLE INJECTION =====
+    function injectStyles() {
+        if (document.getElementById('mob-filter-dropdown-styles')) return;
+        const css = `
       .mob-dd {
         position: relative;
         display: flex;
@@ -6751,344 +7261,367 @@ function escapeHtml(str) {
         border-color: ${THEME.accent};
       }
     `.trim();
-    const style = document.createElement('style');
-    style.id = 'mob-filter-dropdown-styles';
-    style.textContent = css;
-    document.head.appendChild(style);
-  }
-
-  function createChevron() {
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('class', 'mob-dd__chev');
-    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    p.setAttribute('fill', THEME.text);
-    p.setAttribute('d', 'M7 10l5 5 5-5z');
-    svg.appendChild(p);
-    return svg;
-  }
-
-  // ===== PORTAL HELPERS =====
-  function positionPanelToButton(panel, btn) {
-    const rect = btn.getBoundingClientRect();
-    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
-
-    // Desired left based on button
-    let left = rect.left;
-    const panelWidth = rect.width;
-    const padding = 8; // viewport side padding
-
-    // Clamp horizontally into viewport
-    if (left + panelWidth > vw - padding) {
-      left = vw - padding - panelWidth;
-    }
-    if (left < padding) left = padding;
-
-    panel.style.position = 'fixed';
-    panel.style.top = `${rect.bottom + 6}px`; // keep your 6px gap
-    panel.style.left = `${left}px`;
-    panel.style.width = `${panelWidth}px`;
-    panel.style.maxHeight = '280px';
-    panel.style.overflow = 'auto';
-    panel.style.zIndex = '2147483647'; // top-most
-  }
-
-  function enhanceAsDropdown(container, list) {
-    // If already enhanced, do nothing (prevents duplicates)
-    if (container.querySelector('.mob-dd')) return;
-
-    // Build wrapper
-    const ddWrap = document.createElement('div');
-    ddWrap.className = 'mob-dd';
-
-    // Button
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'mob-dd__btn';
-    btn.setAttribute('aria-haspopup', 'listbox');
-    btn.setAttribute('aria-expanded', 'false');
-
-    const labelSpan = document.createElement('span');
-    labelSpan.className = 'mob-dd__label';
-    labelSpan.textContent = 'Filter Monsters';
-    labelSpan.style.opacity = '0.8';
-
-    const countSpan = document.createElement('span');
-    countSpan.className = 'mob-dd__count';
-    countSpan.textContent = '0 selected';
-
-    btn.append(labelSpan, countSpan, createChevron());
-
-    // Panel
-    const panel = document.createElement('div');
-    panel.className = 'mob-dd__panel';
-    panel.setAttribute('role', 'listbox');
-    panel.setAttribute('aria-multiselectable', 'true');
-
-    // Tools (optional)
-    const tools = document.createElement('div');
-    tools.className = 'mob-dd__tools';
-    const chipAll = document.createElement('span');
-    chipAll.className = 'mob-dd__chip';
-    chipAll.textContent = 'Select All';
-    const chipNone = document.createElement('span');
-    chipNone.className = 'mob-dd__chip';
-    chipNone.textContent = 'Clear';
-    tools.append(chipAll, chipNone);
-    panel.appendChild(tools);
-
-    // Move the existing checkbox labels into the panel (not cloning!)
-    list.style.display = 'flex';
-    list.style.flexDirection = 'column';
-    list.style.gap = '8px';
-    panel.appendChild(list);
-
-    // Insert
-    container.style.gap = '8px';
-    container.appendChild(ddWrap);
-    ddWrap.appendChild(btn);
-    ddWrap.appendChild(panel);
-
-    // Update count helper
-    function updateCount() {
-      const inputs = panel.querySelectorAll('input[type="checkbox"]');
-      let checked = 0;
-      inputs.forEach(i => { if (i.checked) checked++; });
-      countSpan.textContent = `${checked} selected`;
-    }
-    updateCount();
-
-    // ===== PORTAL STATE (placeholder + listeners) =====
-    const originalParent = ddWrap; // panel starts as child of ddWrap
-    const placeholder = document.createComment('mob-dd__panel-placeholder');
-
-    function onReposition() {
-      positionPanelToButton(panel, btn);
+        const style = document.createElement('style');
+        style.id = 'mob-filter-dropdown-styles';
+        style.textContent = css;
+        document.head.appendChild(style);
     }
 
-    function openPanel() {
-      panel.classList.add('is-open');
-      btn.setAttribute('aria-expanded', 'true');
-
-      // Move panel to body (portal) if not already there
-      if (panel.parentNode !== document.body) {
-        originalParent.replaceChild(placeholder, panel);
-        document.body.appendChild(panel);
-      }
-
-      // Position by the trigger button
-      positionPanelToButton(panel, btn);
-
-      // Keep aligned on scroll/resize
-      window.addEventListener('scroll', onReposition, { passive: true });
-      window.addEventListener('resize', onReposition);
-
-      // OPTIONAL: If your layout mutates a lot and you need to keep the position synced,
-      // you can enable a lightweight MutationObserver here.
-      // (Commented out by default to avoid overhead.)
-      // if (!openPanel._mo) {
-      //   openPanel._mo = new MutationObserver(onReposition);
-      //   openPanel._mo.observe(document.documentElement, { attributes: true, childList: true, subtree: true });
-      // }
-
-      // Preserve your original "Wave enhanced controls" logic if available
-      if (typeof detectWaveEnhancedControls === 'function' && !detectWaveEnhancedControls()) {
-        const mo = new MutationObserver(() => {
-          if (detectWaveEnhancedControls()) {
-            mo.disconnect();
-            // Re-open to re-render if your flow requires it
-            // (We ensure panel remains open and positioned)
-            onReposition();
-          }
-        });
-        mo.observe(document.documentElement, { childList: true, subtree: true });
-      }
+    function createChevron() {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('class', 'mob-dd__chev');
+        const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        p.setAttribute('fill', THEME.text);
+        p.setAttribute('d', 'M7 10l5 5 5-5z');
+        svg.appendChild(p);
+        return svg;
     }
 
-    function closePanel() {
-      panel.classList.remove('is-open');
-      btn.setAttribute('aria-expanded', 'false');
+    // ===== PORTAL HELPERS =====
+    function positionPanelToButton(panel, btn) {
+        const rect = btn.getBoundingClientRect();
+        const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
 
-      window.removeEventListener('scroll', onReposition);
-      window.removeEventListener('resize', onReposition);
+        // Desired left based on button
+        let left = rect.left;
+        const panelWidth = rect.width;
+        const padding = 8; // viewport side padding
 
-      if (openPanel._mo) {
-        openPanel._mo.disconnect();
-        openPanel._mo = null;
-      }
+        // Clamp horizontally into viewport
+        if (left + panelWidth > vw - padding) {
+            left = vw - padding - panelWidth;
+        }
+        if (left < padding) left = padding;
 
-      // Move back into original component tree so DOM structure/tab order are restored
-      if (panel.parentNode === document.body) {
-        document.body.removeChild(panel);
-        originalParent.replaceChild(panel, placeholder);
-      }
-
-      // Clear any inline styles set during portaling (optional)
-      panel.style.position = '';
-      panel.style.top = '';
-      panel.style.left = '';
-      panel.style.width = '';
-      panel.style.maxHeight = '';
-      panel.style.overflow = '';
-      panel.style.zIndex = '';
+        panel.style.position = 'fixed';
+        panel.style.top = `${rect.bottom + 6}px`; // keep your 6px gap
+        panel.style.left = `${left}px`;
+        panel.style.width = `${panelWidth}px`;
+        panel.style.maxHeight = '280px';
+        panel.style.overflow = 'auto';
+        panel.style.zIndex = '2147483647'; // top-most
     }
 
-    function togglePanel() {
-      const isOpen = panel.classList.contains('is-open');
-      if (isOpen) closePanel(); else openPanel();
-    }
+    function enhanceAsDropdown(container, list) {
+        // If already enhanced, do nothing (prevents duplicates)
+        if (container.querySelector('.mob-dd')) return;
 
-    // Toggle
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      togglePanel();
-    });
+        // Build wrapper
+        const ddWrap = document.createElement('div');
+        ddWrap.className = 'mob-dd';
 
-    // Close on outside click (works even when panel is portaled)
-    document.addEventListener('click', (e) => {
-      if (!ddWrap.contains(e.target) && !panel.contains(e.target)) {
-        closePanel();
-      }
-    });
+        // Button
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'mob-dd__btn';
+        btn.setAttribute('aria-haspopup', 'listbox');
+        btn.setAttribute('aria-expanded', 'false');
 
-    // Keyboard support
-    btn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        togglePanel();
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        openPanel();
-        const firstInput = panel.querySelector('input[type="checkbox"]');
-        firstInput?.focus();
-      }
-    });
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'mob-dd__label';
+        labelSpan.textContent = 'Filter Monsters';
+        labelSpan.style.opacity = '0.8';
 
-    panel.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        closePanel();
-        btn.focus();
-      }
-    });
+        const countSpan = document.createElement('span');
+        countSpan.className = 'mob-dd__count';
+        countSpan.textContent = '0 selected';
 
-    // Listen for changes to keep count synced
-    panel.addEventListener('change', (e) => {
-      if (e.target && e.target.matches('input[type="checkbox"]')) {
+        btn.append(labelSpan, countSpan, createChevron());
+
+        // Panel
+        const panel = document.createElement('div');
+        panel.className = 'mob-dd__panel';
+        panel.setAttribute('role', 'listbox');
+        panel.setAttribute('aria-multiselectable', 'true');
+
+        // Tools (optional)
+        const tools = document.createElement('div');
+        tools.className = 'mob-dd__tools';
+        const chipAll = document.createElement('span');
+        chipAll.className = 'mob-dd__chip';
+        chipAll.textContent = 'Select All';
+        const chipNone = document.createElement('span');
+        chipNone.className = 'mob-dd__chip';
+        chipNone.textContent = 'Clear';
+        tools.append(chipAll, chipNone);
+        panel.appendChild(tools);
+
+        // Move the existing checkbox labels into the panel (not cloning!)
+        list.style.display = 'flex';
+        list.style.flexDirection = 'column';
+        list.style.gap = '8px';
+        panel.appendChild(list);
+
+        // Insert
+        container.style.gap = '8px';
+        container.appendChild(ddWrap);
+        ddWrap.appendChild(btn);
+        ddWrap.appendChild(panel);
+
+        // Update count helper
+        function updateCount() {
+            const inputs = panel.querySelectorAll('input[type="checkbox"]');
+            let checked = 0;
+            inputs.forEach(i => {
+                if (i.checked) checked++;
+            });
+            countSpan.textContent = `${checked} selected`;
+        }
         updateCount();
-      }
-    });
 
-    // Select all / clear
-    chipAll.addEventListener('click', () => {
-      panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-        if (!cb.checked) {
-          cb.checked = true;
-          cb.dispatchEvent(new Event('change', { bubbles: true }));
+        // ===== PORTAL STATE (placeholder + listeners) =====
+        const originalParent = ddWrap; // panel starts as child of ddWrap
+        const placeholder = document.createComment('mob-dd__panel-placeholder');
+
+        function onReposition() {
+            positionPanelToButton(panel, btn);
         }
-      });
-      updateCount();
-    });
-    chipNone.addEventListener('click', () => {
-      panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-        if (cb.checked) {
-          cb.checked = false;
-          cb.dispatchEvent(new Event('change', { bubbles: true }));
+
+        function openPanel() {
+            panel.classList.add('is-open');
+            btn.setAttribute('aria-expanded', 'true');
+
+            // Move panel to body (portal) if not already there
+            if (panel.parentNode !== document.body) {
+                originalParent.replaceChild(placeholder, panel);
+                document.body.appendChild(panel);
+            }
+
+            // Position by the trigger button
+            positionPanelToButton(panel, btn);
+
+            // Keep aligned on scroll/resize
+            window.addEventListener('scroll', onReposition, {
+                passive: true
+            });
+            window.addEventListener('resize', onReposition);
+
+            // OPTIONAL: If your layout mutates a lot and you need to keep the position synced,
+            // you can enable a lightweight MutationObserver here.
+            // (Commented out by default to avoid overhead.)
+            // if (!openPanel._mo) {
+            //   openPanel._mo = new MutationObserver(onReposition);
+            //   openPanel._mo.observe(document.documentElement, { attributes: true, childList: true, subtree: true });
+            // }
+
+            // Preserve your original "Wave enhanced controls" logic if available
+            if (typeof detectWaveEnhancedControls === 'function' && !detectWaveEnhancedControls()) {
+                const mo = new MutationObserver(() => {
+                    if (detectWaveEnhancedControls()) {
+                        mo.disconnect();
+                        // Re-open to re-render if your flow requires it
+                        // (We ensure panel remains open and positioned)
+                        onReposition();
+                    }
+                });
+                mo.observe(document.documentElement, {
+                    childList: true,
+                    subtree: true
+                });
+            }
         }
-      });
-      updateCount();
-    });
 
-    // Keep badge in sync if external code toggles .checked
-    const mo = new MutationObserver(updateCount);
-    panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-      mo.observe(cb, { attributes: true, attributeFilter: ['checked'] });
-    });
-  }
+        function closePanel() {
+            panel.classList.remove('is-open');
+            btn.setAttribute('aria-expanded', 'false');
 
-  let bootObserver; // so we can disconnect after success
+            window.removeEventListener('scroll', onReposition);
+            window.removeEventListener('resize', onReposition);
 
-  async function init() {
-    try {
-      const container = await waitForEl(`#${CONTAINER_ID}`);
-      const list = await waitForEl(`#${LIST_ID}`);
+            if (openPanel._mo) {
+                openPanel._mo.disconnect();
+                openPanel._mo = null;
+            }
 
-      // If already enhanced (e.g., by a previous run), stop
-      if (container.querySelector('.mob-dd')) {
-        if (bootObserver) bootObserver.disconnect();
-        return;
-      }
+            // Move back into original component tree so DOM structure/tab order are restored
+            if (panel.parentNode === document.body) {
+                document.body.removeChild(panel);
+                originalParent.replaceChild(panel, placeholder);
+            }
 
-      injectStyles();
-      enhanceAsDropdown(container, list);
+            // Clear any inline styles set during portaling (optional)
+            panel.style.position = '';
+            panel.style.top = '';
+            panel.style.left = '';
+            panel.style.width = '';
+            panel.style.maxHeight = '';
+            panel.style.overflow = '';
+            panel.style.zIndex = '';
+        }
 
-      // After successful enhancement, stop the boot observer
-      if (bootObserver) bootObserver.disconnect();
-    } catch (err) {
-      // Silent fail if target not present
+        function togglePanel() {
+            const isOpen = panel.classList.contains('is-open');
+            if (isOpen) closePanel();
+            else openPanel();
+        }
+
+        // Toggle
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            togglePanel();
+        });
+
+        // Close on outside click (works even when panel is portaled)
+        document.addEventListener('click', (e) => {
+            if (!ddWrap.contains(e.target) && !panel.contains(e.target)) {
+                closePanel();
+            }
+        });
+
+        // Keyboard support
+        btn.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                togglePanel();
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                openPanel();
+                const firstInput = panel.querySelector('input[type="checkbox"]');
+                firstInput?.focus();
+            }
+        });
+
+        panel.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closePanel();
+                btn.focus();
+            }
+        });
+
+        // Listen for changes to keep count synced
+        panel.addEventListener('change', (e) => {
+            if (e.target && e.target.matches('input[type="checkbox"]')) {
+                updateCount();
+            }
+        });
+
+        // Select all / clear
+        chipAll.addEventListener('click', () => {
+            panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                if (!cb.checked) {
+                    cb.checked = true;
+                    cb.dispatchEvent(new Event('change', {
+                        bubbles: true
+                    }));
+                }
+            });
+            updateCount();
+        });
+        chipNone.addEventListener('click', () => {
+            panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                if (cb.checked) {
+                    cb.checked = false;
+                    cb.dispatchEvent(new Event('change', {
+                        bubbles: true
+                    }));
+                }
+            });
+            updateCount();
+        });
+
+        // Keep badge in sync if external code toggles .checked
+        const mo = new MutationObserver(updateCount);
+        panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            mo.observe(cb, {
+                attributes: true,
+                attributeFilter: ['checked']
+            });
+        });
     }
-  }
 
-  // Run when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init, { once: true });
-  } else {
-    init();
-  }
+    let bootObserver; // so we can disconnect after success
 
-  // In case the target is mounted dynamically later
-  bootObserver = new MutationObserver(() => {
-    const container = document.getElementById(CONTAINER_ID);
-    const list = document.getElementById(LIST_ID);
-    // Only init if both exist and not yet enhanced
-    if (container && list && !container.querySelector('.mob-dd')) {
-      init();
+    async function init() {
+        try {
+            const container = await waitForEl(`#${CONTAINER_ID}`);
+            const list = await waitForEl(`#${LIST_ID}`);
+
+            // If already enhanced (e.g., by a previous run), stop
+            if (container.querySelector('.mob-dd')) {
+                if (bootObserver) bootObserver.disconnect();
+                return;
+            }
+
+            injectStyles();
+            enhanceAsDropdown(container, list);
+
+            // After successful enhancement, stop the boot observer
+            if (bootObserver) bootObserver.disconnect();
+        } catch (err) {
+            // Silent fail if target not present
+        }
     }
-  });
-  bootObserver.observe(document.documentElement || document.body, { childList: true, subtree: true });
+
+    // Run when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init, {
+            once: true
+        });
+    } else {
+        init();
+    }
+
+    // In case the target is mounted dynamically later
+    bootObserver = new MutationObserver(() => {
+        const container = document.getElementById(CONTAINER_ID);
+        const list = document.getElementById(LIST_ID);
+        // Only init if both exist and not yet enhanced
+        if (container && list && !container.querySelector('.mob-dd')) {
+            init();
+        }
+    });
+    bootObserver.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true
+    });
 })();
 
 
 //collpe button for the dude's panels
-(function () {
+(function() {
     if (!vv.isOn('autohunt_collapse')) return;
-  'use strict';
+    'use strict';
 
-  // ===== CONFIG =====
-  const PANEL_ID = 'wave-addon-auto-hunt-controls';
-  const STORAGE_KEY = '__wave_auto_hunt_collapsed';
+    // ===== CONFIG =====
+    const PANEL_ID = 'wave-addon-auto-hunt-controls';
+    const STORAGE_KEY = '__wave_auto_hunt_collapsed';
 
-  // One-shot guard (avoid duplicates across SPA loads or double injection)
-  if (window.__waveAutoHuntCollapseInit) return;
-  window.__waveAutoHuntCollapseInit = true;
+    // One-shot guard (avoid duplicates across SPA loads or double injection)
+    if (window.__waveAutoHuntCollapseInit) return;
+    window.__waveAutoHuntCollapseInit = true;
 
-  // ===== UTIL: wait for element =====
-  function waitForEl(selector, timeout = 15000) {
-    return new Promise((resolve, reject) => {
-      const el = document.querySelector(selector);
-      if (el) return resolve(el);
+    // ===== UTIL: wait for element =====
+    function waitForEl(selector, timeout = 15000) {
+        return new Promise((resolve, reject) => {
+            const el = document.querySelector(selector);
+            if (el) return resolve(el);
 
-      const obs = new MutationObserver(() => {
-        const found = document.querySelector(selector);
-        if (found) {
-          obs.disconnect();
-          resolve(found);
-        }
-      });
-      obs.observe(document.documentElement || document.body, { childList: true, subtree: true });
+            const obs = new MutationObserver(() => {
+                const found = document.querySelector(selector);
+                if (found) {
+                    obs.disconnect();
+                    resolve(found);
+                }
+            });
+            obs.observe(document.documentElement || document.body, {
+                childList: true,
+                subtree: true
+            });
 
-      setTimeout(() => {
-        obs.disconnect();
-        reject(new Error(`Timeout waiting for ${selector}`));
-      }, timeout);
-    });
-  }
+            setTimeout(() => {
+                obs.disconnect();
+                reject(new Error(`Timeout waiting for ${selector}`));
+            }, timeout);
+        });
+    }
 
-  // ===== STYLE INJECTION =====
-  function injectStyles() {
-    if (document.getElementById('wave-auto-hunt-collapse-styles')) return;
-    const style = document.createElement('style');
-    style.id = 'wave-auto-hunt-collapse-styles';
-    style.textContent = `
+    // ===== STYLE INJECTION =====
+    function injectStyles() {
+        if (document.getElementById('wave-auto-hunt-collapse-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'wave-auto-hunt-collapse-styles';
+        style.textContent = `
       /* Positioning context for the top-right button */
       #${PANEL_ID} {
         position: relative;
@@ -7144,214 +7677,219 @@ function escapeHtml(str) {
         padding-right: 28px; /* space to the right so content doesn't hide behind the button */
       }
     `.trim();
-    document.head.appendChild(style);
-  }
-
-  function createChevronIcon(direction = 'up') {
-    // 'up' arrow (collapse); rotate for expand
-    const svgNS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(svgNS, 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    const path = document.createElementNS(svgNS, 'path');
-    path.setAttribute('fill', 'currentColor');
-    // Up chevron
-    path.setAttribute('d', 'M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z');
-    svg.appendChild(path);
-    if (direction === 'down') {
-      svg.style.transform = 'rotate(180deg)';
-    }
-    return svg;
-  }
-
-  function enhance(panel) {
-    // Idempotency inside the panel
-    if (panel.querySelector('.wave-ah__collapse-btn')) return;
-
-    // Identify header row (first child row with the toggle and label)
-    // Your HTML: first child is a row with the main checkbox + label + (Ctrl+B)
-    const children = Array.from(panel.children);
-    if (children.length === 0) return;
-
-    const headerRow = children[0];
-    headerRow.classList.add('wave-ah__header-row');
-
-    // Wrap the rest of the rows in a collapsible container
-    const contentWrap = document.createElement('div');
-    contentWrap.className = 'wave-ah__content';
-
-    // Move all children after header into contentWrap
-    for (let i = 1; i < children.length; i++) {
-      contentWrap.appendChild(children[i]); // moves, doesn't clone
-    }
-    panel.appendChild(contentWrap);
-
-    // Create the top-right collapse button
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'wave-ah__collapse-btn';
-    btn.setAttribute('aria-label', 'Collapse Auto Hunt');
-    btn.setAttribute('title', 'Collapse/Expand');
-
-    const icon = createChevronIcon('up'); // Up by default = "collapse"
-    btn.appendChild(icon);
-    panel.appendChild(btn);
-
-    // Measure and set content height for smooth animation
-    function setContentHeightToAuto() {
-      // Temporarily set to auto to measure scrollHeight
-      contentWrap.style.height = 'auto';
-      const h = contentWrap.scrollHeight;
-      contentWrap.style.height = `${h}px`;
+        document.head.appendChild(style);
     }
 
-    // Initialize height after first layout
-    requestAnimationFrame(() => {
-      setContentHeightToAuto();
-    });
-
-    // Toggle logic + persistence
-    const isCollapsedStored = localStorage.getItem(STORAGE_KEY) === '1';
-    if (isCollapsedStored) {
-      panel.classList.add('is-collapsed');
-      icon.style.transform = 'rotate(180deg)'; // show "down" when collapsed
-      // Set initial height to 0 for collapsed state
-      contentWrap.style.height = '0px';
-      btn.setAttribute('aria-label', 'Expand Auto Hunt');
-    } else {
-      setContentHeightToAuto();
-    }
-
-    function collapse() {
-      // Animate to 0
-      const current = contentWrap.getBoundingClientRect().height;
-      contentWrap.style.height = `${current}px`; // set fixed start
-      // next frame, transition to 0
-      requestAnimationFrame(() => {
-        contentWrap.style.height = '0px';
-        panel.classList.add('is-collapsed');
-        icon.style.transform = 'rotate(180deg)'; // down
-        btn.setAttribute('aria-label', 'Expand Auto Hunt');
-        localStorage.setItem(STORAGE_KEY, '1');
-      });
-    }
-
-    function expand() {
-      // Measure scrollHeight and animate to that value
-      const target = contentWrap.scrollHeight;
-      contentWrap.style.height = `${target}px`;
-      panel.classList.remove('is-collapsed');
-      icon.style.transform = ''; // up
-      btn.setAttribute('aria-label', 'Collapse Auto Hunt');
-      localStorage.setItem(STORAGE_KEY, '0');
-
-      // After transition, set to 'auto' to handle dynamic content growth
-      const onEnd = () => {
-        if (!panel.classList.contains('is-collapsed')) {
-          contentWrap.style.height = 'auto';
+    function createChevronIcon(direction = 'up') {
+        // 'up' arrow (collapse); rotate for expand
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        const path = document.createElementNS(svgNS, 'path');
+        path.setAttribute('fill', 'currentColor');
+        // Up chevron
+        path.setAttribute('d', 'M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z');
+        svg.appendChild(path);
+        if (direction === 'down') {
+            svg.style.transform = 'rotate(180deg)';
         }
-        contentWrap.removeEventListener('transitionend', onEnd);
-      };
-      contentWrap.addEventListener('transitionend', onEnd);
+        return svg;
     }
 
-    function toggle() {
-      if (panel.classList.contains('is-collapsed')) {
-        expand();
-      } else {
-        collapse();
-      }
+    function enhance(panel) {
+        // Idempotency inside the panel
+        if (panel.querySelector('.wave-ah__collapse-btn')) return;
+
+        // Identify header row (first child row with the toggle and label)
+        // Your HTML: first child is a row with the main checkbox + label + (Ctrl+B)
+        const children = Array.from(panel.children);
+        if (children.length === 0) return;
+
+        const headerRow = children[0];
+        headerRow.classList.add('wave-ah__header-row');
+
+        // Wrap the rest of the rows in a collapsible container
+        const contentWrap = document.createElement('div');
+        contentWrap.className = 'wave-ah__content';
+
+        // Move all children after header into contentWrap
+        for (let i = 1; i < children.length; i++) {
+            contentWrap.appendChild(children[i]); // moves, doesn't clone
+        }
+        panel.appendChild(contentWrap);
+
+        // Create the top-right collapse button
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'wave-ah__collapse-btn';
+        btn.setAttribute('aria-label', 'Collapse Auto Hunt');
+        btn.setAttribute('title', 'Collapse/Expand');
+
+        const icon = createChevronIcon('up'); // Up by default = "collapse"
+        btn.appendChild(icon);
+        panel.appendChild(btn);
+
+        // Measure and set content height for smooth animation
+        function setContentHeightToAuto() {
+            // Temporarily set to auto to measure scrollHeight
+            contentWrap.style.height = 'auto';
+            const h = contentWrap.scrollHeight;
+            contentWrap.style.height = `${h}px`;
+        }
+
+        // Initialize height after first layout
+        requestAnimationFrame(() => {
+            setContentHeightToAuto();
+        });
+
+        // Toggle logic + persistence
+        const isCollapsedStored = localStorage.getItem(STORAGE_KEY) === '1';
+        if (isCollapsedStored) {
+            panel.classList.add('is-collapsed');
+            icon.style.transform = 'rotate(180deg)'; // show "down" when collapsed
+            // Set initial height to 0 for collapsed state
+            contentWrap.style.height = '0px';
+            btn.setAttribute('aria-label', 'Expand Auto Hunt');
+        } else {
+            setContentHeightToAuto();
+        }
+
+        function collapse() {
+            // Animate to 0
+            const current = contentWrap.getBoundingClientRect().height;
+            contentWrap.style.height = `${current}px`; // set fixed start
+            // next frame, transition to 0
+            requestAnimationFrame(() => {
+                contentWrap.style.height = '0px';
+                panel.classList.add('is-collapsed');
+                icon.style.transform = 'rotate(180deg)'; // down
+                btn.setAttribute('aria-label', 'Expand Auto Hunt');
+                localStorage.setItem(STORAGE_KEY, '1');
+            });
+        }
+
+        function expand() {
+            // Measure scrollHeight and animate to that value
+            const target = contentWrap.scrollHeight;
+            contentWrap.style.height = `${target}px`;
+            panel.classList.remove('is-collapsed');
+            icon.style.transform = ''; // up
+            btn.setAttribute('aria-label', 'Collapse Auto Hunt');
+            localStorage.setItem(STORAGE_KEY, '0');
+
+            // After transition, set to 'auto' to handle dynamic content growth
+            const onEnd = () => {
+                if (!panel.classList.contains('is-collapsed')) {
+                    contentWrap.style.height = 'auto';
+                }
+                contentWrap.removeEventListener('transitionend', onEnd);
+            };
+            contentWrap.addEventListener('transitionend', onEnd);
+        }
+
+        function toggle() {
+            if (panel.classList.contains('is-collapsed')) {
+                expand();
+            } else {
+                collapse();
+            }
+        }
+
+        // Click + keyboard
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggle();
+        });
+        btn.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggle();
+            }
+        });
+
+        // If content changes size while expanded, re-fit height
+        const ro = new ResizeObserver(() => {
+            if (!panel.classList.contains('is-collapsed')) {
+                setContentHeightToAuto();
+            }
+        });
+        ro.observe(contentWrap);
     }
 
-    // Click + keyboard
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggle();
+    async function init() {
+        try {
+            await waitForEl(`#${PANEL_ID}`);
+            injectStyles();
+            const panel = document.getElementById(PANEL_ID);
+            if (!panel) return;
+            enhance(panel);
+        } catch (e) {
+            // silent fail
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init, {
+            once: true
+        });
+    } else {
+        init();
+    }
+
+    // Safety net: if the panel is mounted later in a SPA
+    const bootObserver = new MutationObserver(() => {
+        const panel = document.getElementById(PANEL_ID);
+        if (panel && !panel.querySelector('.wave-ah__collapse-btn')) {
+            injectStyles();
+            enhance(panel);
+            // If you know this panel won’t get re-mounted, you can disconnect:
+            // bootObserver.disconnect();
+        }
     });
-    btn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        toggle();
-      }
+    bootObserver.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true
     });
-
-    // If content changes size while expanded, re-fit height
-    const ro = new ResizeObserver(() => {
-      if (!panel.classList.contains('is-collapsed')) {
-        setContentHeightToAuto();
-      }
-    });
-    ro.observe(contentWrap);
-  }
-
-  async function init() {
-    try {
-      await waitForEl(`#${PANEL_ID}`);
-      injectStyles();
-      const panel = document.getElementById(PANEL_ID);
-      if (!panel) return;
-      enhance(panel);
-    } catch (e) {
-      // silent fail
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init, { once: true });
-  } else {
-    init();
-  }
-
-  // Safety net: if the panel is mounted later in a SPA
-  const bootObserver = new MutationObserver(() => {
-    const panel = document.getElementById(PANEL_ID);
-    if (panel && !panel.querySelector('.wave-ah__collapse-btn')) {
-      injectStyles();
-      enhance(panel);
-      // If you know this panel won’t get re-mounted, you can disconnect:
-      // bootObserver.disconnect();
-    }
-  });
-  bootObserver.observe(document.documentElement || document.body, { childList: true, subtree: true });
 })();
 
 //Guild members in red
-(function () {
+(function() {
     function isExceptionPage() {
-    // Normalize URL for robust matching
-    const href = (window.location && window.location.href || "").toLowerCase();
-    const path = (window.location && window.location.pathname || "").toLowerCase();
+        // Normalize URL for robust matching
+        const href = (window.location && window.location.href || "").toLowerCase();
+        const path = (window.location && window.location.pathname || "").toLowerCase();
 
-    // Match on pathname first (safer), then fallback to href
-    const targets = [
-        "/bookmark.php",
-        "/title/",
-        "/manga/",
-        "/index.php",
-        "/inventory.php",
-        "/blacksmith.php",
-        "/stats.php",
-        "/achievements.php",
-
-
-    ];
-
-    // If any target is present in the path or full URL → exception
-    return targets.some(t => path.includes(t) || href.includes(t));
-}
+        // Match on pathname first (safer), then fallback to href
+        const targets = [
+            "/bookmark.php",
+            "/title/",
+            "/manga/",
+            "/index.php",
+            "/inventory.php",
+            "/blacksmith.php",
+            "/stats.php",
+            "/achievements.php",
 
 
- if (isExceptionPage()) return;
-  //if (!vv.isOn('membersInRed')) return;
-  'use strict';
+        ];
 
-  const GUILD_URL = '/guild_members.php';
+        // If any target is present in the path or full URL → exception
+        return targets.some(t => path.includes(t) || href.includes(t));
+    }
 
-  // ==== Styles ==============================================================
-  function ensureStyles() {
-    if (document.getElementById('guild-highlight-style')) return;
-    const style = document.createElement('style');
-    style.id = 'guild-highlight-style';
-    style.textContent = `
+
+    if (isExceptionPage()) return;
+    //if (!vv.isOn('membersInRed')) return;
+    'use strict';
+
+    const GUILD_URL = '/guild_members.php';
+
+    // ==== Styles ==============================================================
+    function ensureStyles() {
+        if (document.getElementById('guild-highlight-style')) return;
+        const style = document.createElement('style');
+        style.id = 'guild-highlight-style';
+        style.textContent = `
       /* Red tag we prepend when missing */
       .guild-ahab-tag {
         color: red;
@@ -7365,285 +7903,289 @@ function escapeHtml(str) {
       /* Container to mark processed chunks so we don't double-process */
       .guild-hl { }
     `;
-    document.head.appendChild(style);
-  }
+        document.head.appendChild(style);
+    }
 
-  // ==== Utilities ===========================================================
-  // Normalize for quick test only (replacement uses original text)
-  function normalizeForMatch(s) {
-    if (!s) return s;
-    return s
-      .replace(/\u00A0/g, ' ')          // NBSP -> space
-      .replace(/[\u200B-\u200D]/g, ''); // remove zero-width chars
-  }
+    // ==== Utilities ===========================================================
+    // Normalize for quick test only (replacement uses original text)
+    function normalizeForMatch(s) {
+        if (!s) return s;
+        return s
+            .replace(/\u00A0/g, ' ') // NBSP -> space
+            .replace(/[\u200B-\u200D]/g, ''); // remove zero-width chars
+    }
 
-  // Remove noise from display name from the guild list
-  function sanitizeDisplayName(raw) {
-    let s = (raw || '');
-    // Remove trailing "(you)"
-    s = s.replace(/\s*\(you\)\s*$/i, '');
-    // OPTIONAL: remove any trailing parenthetical note
-    // s = s.replace(/\s*\([^)]*\)\s*$/i, '');
-    return s.trim().replace(/\s+/g, ' ');
-  }
+    // Remove noise from display name from the guild list
+    function sanitizeDisplayName(raw) {
+        let s = (raw || '');
+        // Remove trailing "(you)"
+        s = s.replace(/\s*\(you\)\s*$/i, '');
+        // OPTIONAL: remove any trailing parenthetical note
+        // s = s.replace(/\s*\([^)]*\)\s*$/i, '');
+        return s.trim().replace(/\s+/g, ' ');
+    }
 
-  // Fetch first <a> text inside each <tr> in <tbody> from /guild_members.php
-  async function fetchGuildMemberNames() {
-    const res = await fetch(GUILD_URL, {
-      credentials: 'same-origin',
-      cache: 'no-store'
-    });
-    if (!res.ok) throw new Error(`Failed to fetch ${GUILD_URL}: ${res.status}`);
-    const html = await res.text();
-    const doc = new DOMParser().parseFromString(html, 'text/html');
+    // Fetch first <a> text inside each <tr> in <tbody> from /guild_members.php
+    async function fetchGuildMemberNames() {
+        const res = await fetch(GUILD_URL, {
+            credentials: 'same-origin',
+            cache: 'no-store'
+        });
+        if (!res.ok) throw new Error(`Failed to fetch ${GUILD_URL}: ${res.status}`);
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
 
-    const namesSet = new Set();
-    doc.querySelectorAll('tbody tr').forEach(tr => {
-      const a = tr.querySelector('a');
-      if (a) {
-        const name = sanitizeDisplayName(a.textContent);
-        if (name) namesSet.add(name);
-      }
-    });
+        const namesSet = new Set();
+        doc.querySelectorAll('tbody tr').forEach(tr => {
+            const a = tr.querySelector('a');
+            if (a) {
+                const name = sanitizeDisplayName(a.textContent);
+                if (name) namesSet.add(name);
+            }
+        });
 
-    return Array.from(namesSet);
-  }
+        return Array.from(namesSet);
+    }
 
-  // Regex helpers
-  function escapeRegExp(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
+    // Regex helpers
+    function escapeRegExp(s) {
+        return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
 
-  function supportsLookbehind() {
-    try { return /(?<=a)b/u.test('ab'); } catch { return false; }
-  }
+    function supportsLookbehind() {
+        try {
+            return /(?<=a)b/u.test('ab');
+        } catch {
+            return false;
+        }
+    }
 
-  // Build a whitespace-flexible username core and allow tag on either side:
-  //   [TAG] username
-  //   username [TAG]
-  //   [TAG]username
-  //   username[TAG]
-  function buildCoreNamePattern(sanitizedName) {
-    // Strip one leading or trailing [ ... ] tag from the *source* to get canonical username
-    const username = sanitizedName
-      .replace(/^\s*\[[^\]]+\]\s*/, '')  // leading tag
-      .replace(/\s*\[[^\]]+\]\s*$/, '')  // trailing tag
-      .trim();
+    // Build a whitespace-flexible username core and allow tag on either side:
+    //   [TAG] username
+    //   username [TAG]
+    //   [TAG]username
+    //   username[TAG]
+    function buildCoreNamePattern(sanitizedName) {
+        // Strip one leading or trailing [ ... ] tag from the *source* to get canonical username
+        const username = sanitizedName
+            .replace(/^\s*\[[^\]]+\]\s*/, '') // leading tag
+            .replace(/\s*\[[^\]]+\]\s*$/, '') // trailing tag
+            .trim();
 
-    const escapedUser = escapeRegExp(username);
-    const userFlexible = escapedUser.replace(/ +/g, '\\s+');
+        const escapedUser = escapeRegExp(username);
+        const userFlexible = escapedUser.replace(/ +/g, '\\s+');
 
-    const tagPat = '\\[[^\\]]+\\]'; // any [ ... ]
+        const tagPat = '\\[[^\\]]+\\]'; // any [ ... ]
 
-    // Optional tag before and/or after username; spaces around are optional
-    return `(?:${tagPat}\\s*)?${userFlexible}(?:\\s*${tagPat})?`;
-  }
+        // Optional tag before and/or after username; spaces around are optional
+        return `(?:${tagPat}\\s*)?${userFlexible}(?:\\s*${tagPat})?`;
+    }
 
-  // Add token boundaries so we don't match inside other words (Ocean ≠ Oceanic)
-  function applyTokenBoundaries(pattern, useLB) {
-    const notWord = '[^\\p{L}\\p{N}_]'; // letters/digits/_ are "word"
-    const left  = useLB ? `(?<=^|${notWord})` : `(^|${notWord})`;
-    const right = `(?=$|${notWord})`;
-    return useLB
-      ? `${left}(?:${pattern})${right}`
-      : `${left}(${pattern})${right}`; // capture left boundary to reinsert in replacement
-  }
+    // Add token boundaries so we don't match inside other words (Ocean ≠ Oceanic)
+    function applyTokenBoundaries(pattern, useLB) {
+        const notWord = '[^\\p{L}\\p{N}_]'; // letters/digits/_ are "word"
+        const left = useLB ? `(?<=^|${notWord})` : `(^|${notWord})`;
+        const right = `(?=$|${notWord})`;
+        return useLB ?
+            `${left}(?:${pattern})${right}` :
+            `${left}(${pattern})${right}`; // capture left boundary to reinsert in replacement
+    }
 
-  function buildRegexes(names) {
-    if (!names || names.length === 0) return null;
+    function buildRegexes(names) {
+        if (!names || names.length === 0) return null;
 
-    const useLB = supportsLookbehind();
-    const cores = names.map(buildCoreNamePattern).sort((a, b) => b.length - a.length);
-    const bounded = cores.map(p => applyTokenBoundaries(p, useLB));
-    const union = '(' + bounded.join('|') + ')';
+        const useLB = supportsLookbehind();
+        const cores = names.map(buildCoreNamePattern).sort((a, b) => b.length - a.length);
+        const bounded = cores.map(p => applyTokenBoundaries(p, useLB));
+        const union = '(' + bounded.join('|') + ')';
 
-    return {
-      mode: useLB ? 'lookbehind' : 'fallback',
-      test: new RegExp(union, 'iu'),
-      replace: new RegExp(union, 'giu')
-    };
-  }
+        return {
+            mode: useLB ? 'lookbehind' : 'fallback',
+            test: new RegExp(union, 'iu'),
+            replace: new RegExp(union, 'giu')
+        };
+    }
 
-  // Skip non-content or already-processed areas
-  function shouldSkipElement(el) {
-    if (!(el instanceof Element)) return false;
-    const tag = el.tagName;
-    if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'CODE', 'PRE', 'INPUT'].includes(tag)) return true;
-    if (el.closest('.guild-hl')) return true;           // whole block already processed
-    if (el.closest('.guild-ahab, .guild-ahab-tag')) return true; // any inner parts already marked
-    return false;
-  }
+    // Skip non-content or already-processed areas
+    function shouldSkipElement(el) {
+        if (!(el instanceof Element)) return false;
+        const tag = el.tagName;
+        if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'CODE', 'PRE', 'INPUT'].includes(tag)) return true;
+        if (el.closest('.guild-hl')) return true; // whole block already processed
+        if (el.closest('.guild-ahab, .guild-ahab-tag')) return true; // any inner parts already marked
+        return false;
+    }
 
-  // Decorate a matched chunk:
-  // - If it already contains "AHAB" (any case), color just those letters red.
-  // - Else, prepend a red "[AHAB]" plus a space, then the original chunk.
-  function decorateInsert(core) {
-    if (/AHAB/i.test(core)) {
-      return `<span class="guild-hl">${
+    // Decorate a matched chunk:
+    // - If it already contains "AHAB" (any case), color just those letters red.
+    // - Else, prepend a red "[AHAB]" plus a space, then the original chunk.
+    function decorateInsert(core) {
+        if (/AHAB/i.test(core)) {
+            return `<span class="guild-hl">${
         core.replace(/AHAB/gi, m => `<span class="guild-ahab">${m}</span>`)
       }</span>`;
-    }
-    // No "AHAB" found: prepend red [AHAB]
-    return `<span class="guild-hl"><span class="guild-ahab-tag">[AHAB]</span> ${core}</span>`;
-  }
-
-  // Perform highlighting/insertion in a node
-  function highlightNode(node, re) {
-    if (!re) return;
-
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = node.nodeValue;
-      if (!text) return;
-
-      const testText = normalizeForMatch(text);
-      if (!re.test.test(testText)) return;
-
-      const wrapper = document.createElement('span');
-
-      if (re.mode === 'lookbehind') {
-        // Boundaries are zero-width: replace exact match
-        wrapper.innerHTML = text.replace(re.replace, match => decorateInsert(match));
-      } else {
-        // Fallback (no lookbehind): union includes left boundary inside the overall match.
-        wrapper.innerHTML = text.replace(re.replace, function () {
-          const args = Array.from(arguments);
-          const whole = args[0];
-          const offset = args[args.length - 2];
-
-          // If the match starts with a non-word boundary char, keep it outside our decorated block.
-          let leadingBoundary = '';
-          let core = whole;
-          if (core.length > 0 && !/[\p{L}\p{N}_]/u.test(core[0])) {
-            leadingBoundary = core[0];
-            core = core.slice(1);
-          }
-          return leadingBoundary + decorateInsert(core);
-        });
-      }
-
-      if (node.parentNode) node.parentNode.replaceChild(wrapper, node);
-
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node;
-      if (shouldSkipElement(el)) return;
-
-      const children = Array.from(el.childNodes);
-      for (const child of children) highlightNode(child, re);
-    }
-  }
-
-  // ==== Init ================================================================
-  async function init() {
-    try {
-      ensureStyles();
-
-      const names = await fetchGuildMemberNames();
-      if (!names.length) {
-        console.warn('Guild highlighter: no names found at', GUILD_URL);
-        return;
-      }
-
-      const re = buildRegexes(names);
-
-      // Initial pass
-      highlightNode(document.body, re);
-
-      // Watch future DOM updates
-      const observer = new MutationObserver(mutations => {
-        for (const mutation of mutations) {
-          if (mutation.type === 'childList') {
-            mutation.addedNodes.forEach(node => {
-              if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) {
-                highlightNode(node, re);
-              }
-            });
-          } else if (mutation.type === 'characterData') {
-            highlightNode(mutation.target, re);
-          }
         }
-      });
-
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-        attributes: false
-      });
-
-    } catch (err) {
-      console.error('Guild highlighter error:', err);
+        // No "AHAB" found: prepend red [AHAB]
+        return `<span class="guild-hl"><span class="guild-ahab-tag">[AHAB]</span> ${core}</span>`;
     }
-  }
 
-  init();
+    // Perform highlighting/insertion in a node
+    function highlightNode(node, re) {
+        if (!re) return;
+
+        if (node.nodeType === Node.TEXT_NODE) {
+            const text = node.nodeValue;
+            if (!text) return;
+
+            const testText = normalizeForMatch(text);
+            if (!re.test.test(testText)) return;
+
+            const wrapper = document.createElement('span');
+
+            if (re.mode === 'lookbehind') {
+                // Boundaries are zero-width: replace exact match
+                wrapper.innerHTML = text.replace(re.replace, match => decorateInsert(match));
+            } else {
+                // Fallback (no lookbehind): union includes left boundary inside the overall match.
+                wrapper.innerHTML = text.replace(re.replace, function() {
+                    const args = Array.from(arguments);
+                    const whole = args[0];
+                    const offset = args[args.length - 2];
+
+                    // If the match starts with a non-word boundary char, keep it outside our decorated block.
+                    let leadingBoundary = '';
+                    let core = whole;
+                    if (core.length > 0 && !/[\p{L}\p{N}_]/u.test(core[0])) {
+                        leadingBoundary = core[0];
+                        core = core.slice(1);
+                    }
+                    return leadingBoundary + decorateInsert(core);
+                });
+            }
+
+            if (node.parentNode) node.parentNode.replaceChild(wrapper, node);
+
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+            const el = node;
+            if (shouldSkipElement(el)) return;
+
+            const children = Array.from(el.childNodes);
+            for (const child of children) highlightNode(child, re);
+        }
+    }
+
+    // ==== Init ================================================================
+    async function init() {
+        try {
+            ensureStyles();
+
+            const names = await fetchGuildMemberNames();
+            if (!names.length) {
+                console.warn('Guild highlighter: no names found at', GUILD_URL);
+                return;
+            }
+
+            const re = buildRegexes(names);
+
+            // Initial pass
+            highlightNode(document.body, re);
+
+            // Watch future DOM updates
+            const observer = new MutationObserver(mutations => {
+                for (const mutation of mutations) {
+                    if (mutation.type === 'childList') {
+                        mutation.addedNodes.forEach(node => {
+                            if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) {
+                                highlightNode(node, re);
+                            }
+                        });
+                    } else if (mutation.type === 'characterData') {
+                        highlightNode(mutation.target, re);
+                    }
+                }
+            });
+
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                characterData: true,
+                attributes: false
+            });
+
+        } catch (err) {
+            console.error('Guild highlighter error:', err);
+        }
+    }
+
+    init();
 })();
 
 
 //quests cooldown
-    const STORAGE_KEY = "quest_cooldowns";
-    const COOLDOWN_MS = 72 * 60 * 60 * 1000; // 72 hours
+const STORAGE_KEY = "quest_cooldowns";
+const COOLDOWN_MS = 72 * 60 * 60 * 1000; // 72 hours
 
-    function loadCooldowns() {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-    }
+function loadCooldowns() {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+}
 
-    function saveCooldowns(data) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    }
+function saveCooldowns(data) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
 
-    function formatTime(ms) {
-        if (ms <= 0) return "READY";
+function formatTime(ms) {
+    if (ms <= 0) return "READY";
 
-        let totalSeconds = Math.floor(ms / 1000);
-        let hours = Math.floor(totalSeconds / 3600);
-        let minutes = Math.floor((totalSeconds % 3600) / 60);
+    let totalSeconds = Math.floor(ms / 1000);
+    let hours = Math.floor(totalSeconds / 3600);
+    let minutes = Math.floor((totalSeconds % 3600) / 60);
 
-        return `${hours}h ${minutes}m`;
-    }
+    return `${hours}h ${minutes}m`;
+}
 
-    // Detect "Finish quest" button clicked
-    function hookFinishButtons() {
-        document.querySelectorAll(".quest-finish-btn").forEach(btn => {
-            if (btn.dataset.cooldownHooked) return;
-            btn.dataset.cooldownHooked = "1";
-btn.addEventListener("click", () => {
+// Detect "Finish quest" button clicked
+function hookFinishButtons() {
+    document.querySelectorAll(".quest-finish-btn").forEach(btn => {
+        if (btn.dataset.cooldownHooked) return;
+        btn.dataset.cooldownHooked = "1";
+        btn.addEventListener("click", () => {
 
-    // Try main-page style onclick parser
-    let onClick = btn.getAttribute("onclick");
-    let match = onClick ? onClick.match(/finishQuest\((\d+)/) : null;
+            // Try main-page style onclick parser
+            let onClick = btn.getAttribute("onclick");
+            let match = onClick ? onClick.match(/finishQuest\((\d+)/) : null;
 
-    let questID = null;
+            let questID = null;
 
-    if (match) {
-        questID = match[1]; // main page finish
-    } else {
-        // Use sidebar’s data attribute
-        questID = btn.dataset.questId;
-    }
+            if (match) {
+                questID = match[1]; // main page finish
+            } else {
+                // Use sidebar’s data attribute
+                questID = btn.dataset.questId;
+            }
 
-    if (!questID) return;
+            if (!questID) return;
 
-    let title = btn.closest(".quest-row, .sidebar-quest")
-                   ?.querySelector(".quest-main-title, .quest-title")
-                   ?.innerText.trim();
+            let title = btn.closest(".quest-row, .sidebar-quest")
+                ?.querySelector(".quest-main-title, .quest-title")
+                ?.innerText.trim();
 
-    let data = loadCooldowns();
-    data[questID] = {
-        name: title,
-        completedAt: Date.now(),
-        availableAt: Date.now() + COOLDOWN_MS
-    };
-    saveCooldowns(data);
+            let data = loadCooldowns();
+            data[questID] = {
+                name: title,
+                completedAt: Date.now(),
+                availableAt: Date.now() + COOLDOWN_MS
+            };
+            saveCooldowns(data);
 
-    console.log("Quest logged (sidebar or main):", questID, title);
-});
-
-
+            console.log("Quest logged (sidebar or main):", questID, title);
         });
-    }
 
-    // Display cooldown section
-    function renderCooldownList() {
+
+    });
+}
+
+// Display cooldown section
+function renderCooldownList() {
     let data = loadCooldowns();
     let now = Date.now();
 
@@ -7699,25 +8241,27 @@ btn.addEventListener("click", () => {
     }
 
     box.innerHTML = html;
-       setTimeout(() => {
-    const exportBtn = document.getElementById("qtExportBtn");
-    const importBtn = document.getElementById("qtImportBtn");
+    setTimeout(() => {
+        const exportBtn = document.getElementById("qtExportBtn");
+        const importBtn = document.getElementById("qtImportBtn");
 
-    if (exportBtn) exportBtn.onclick = exportCooldowns;
-    if (importBtn) importBtn.onclick = importCooldowns;
-}, 100);
+        if (exportBtn) exportBtn.onclick = exportCooldowns;
+        if (importBtn) importBtn.onclick = importCooldowns;
+    }, 100);
 }
 
-    // Auto-update timers every minute
-    setInterval(renderCooldownList, 60 * 1000);
+// Auto-update timers every minute
+setInterval(renderCooldownList, 60 * 1000);
 
-    // Initial load
-    setInterval(hookFinishButtons, 500);
-    renderCooldownList();
+// Initial load
+setInterval(hookFinishButtons, 500);
+renderCooldownList();
 
-    function exportCooldowns() {
+function exportCooldowns() {
     const data = loadCooldowns();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json"
+    });
     const url = URL.createObjectURL(blob);
 
     const a = document.createElement("a");
@@ -7728,7 +8272,7 @@ btn.addEventListener("click", () => {
     URL.revokeObjectURL(url);
 }
 
-    function importCooldowns() {
+function importCooldowns() {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "application/json";
@@ -7744,7 +8288,10 @@ btn.addEventListener("click", () => {
 
                 // Merge with existing data
                 const existing = loadCooldowns();
-                const merged = { ...existing, ...imported };
+                const merged = {
+                    ...existing,
+                    ...imported
+                };
 
                 saveCooldowns(merged);
                 alert("Cooldowns successfully imported!");
@@ -7759,6 +8306,220 @@ btn.addEventListener("click", () => {
 
     input.click();
 }
+//End quests cooldown
+
+//battle pages logs
+
+(function () {
+    "use strict";
+
+    //----------------------------------------------------------
+    // 1) Identify battle ID (?dgmid= or ?id=)
+    //----------------------------------------------------------
+    const urlParams = new URL(location.href).searchParams;
+    const battleId =
+        urlParams.get("dgmid") ||
+        urlParams.get("id") ||
+        "default";
+
+    const STORAGE_KEY = `demonics_logs_${battleId}`;
+    const EXPIRATION_HOURS = 12;
+
+    //----------------------------------------------------------
+    // 2) Log storage utilities (48 hours retention)
+    //----------------------------------------------------------
+    function loadLogs() {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+
+        let logs = JSON.parse(raw);
+        const now = Date.now();
+
+        // Remove expired logs
+        logs = logs.filter(l => l.expireAt > now);
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(logs));
+        return logs;
+    }
+
+    function saveLog(text) {
+        const logs = loadLogs();
+
+        logs.unshift({
+            text,
+            ts: Date.now(),
+            expireAt: Date.now() + EXPIRATION_HOURS * 3600 * 1000
+        });
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(logs));
+
+        console.log("📥 Saved log:", text);
+    }
+
+    //----------------------------------------------------------
+    // 3) Clean log formatter: SKILL → DAMAGE
+    //----------------------------------------------------------
+    function formatLog(entry) {
+        if (!entry) return null;
+
+        const skill = entry.SKILL_NAME || "Unknown Skill";
+        const dmg = entry.DAMAGE != null ? Number(entry.DAMAGE).toLocaleString() : "0";
+
+        // Clean, simple format
+        return `${skill} → ${dmg}`;
+    }
+
+    //----------------------------------------------------------
+    // 4) UI creation (Last Hit + Dropdown)
+    //----------------------------------------------------------
+    function ensureUI() {
+        const dmgSpan = document.querySelector("#yourDamageValue");
+        if (!dmgSpan) return null;
+
+        // LAST HIT span
+        let lastHit = document.querySelector("#yourLastHitValue");
+        if (!lastHit) {
+            lastHit = document.createElement("span");
+            lastHit.id = "yourLastHitValue";
+            lastHit.style.marginLeft = "10px";
+            lastHit.style.color = "#ff8080";
+            lastHit.style.fontWeight = "700";
+            lastHit.textContent = "(Last Hit: 0)";
+            dmgSpan.insertAdjacentElement("afterend", lastHit);
+        }
+
+        // LOG DROPDOWN
+        let dropdown = document.querySelector("#damageLogDropdown");
+        if (!dropdown) {
+            dropdown = document.createElement("select");
+            dropdown.id = "damageLogDropdown";
+            dropdown.style.marginLeft = "12px";
+            dropdown.style.background = "#202235";
+            dropdown.style.color = "#cfd4ff";
+            dropdown.style.border = "1px solid #2b2e49";
+            dropdown.style.borderRadius = "6px";
+            dropdown.style.padding = "3px 6px";
+            dropdown.style.fontSize = "12px";
+
+            lastHit.insertAdjacentElement("afterend", dropdown);
+        }
+
+        return { lastHit, dropdown };
+    }
+
+    //----------------------------------------------------------
+    // 5) Refresh dropdown options
+    //----------------------------------------------------------
+    function refreshDropdown() {
+        const ui = ensureUI();
+        if (!ui) return;
+
+        const dropdown = ui.dropdown;
+        const logs = loadLogs();
+
+        dropdown.innerHTML = "";
+
+        if (logs.length === 0) {
+            const opt = document.createElement("option");
+            opt.textContent = `(No logs for ${battleId})`;
+            dropdown.appendChild(opt);
+            return;
+        }
+
+        // Show ONLY the clean text
+        logs.forEach(log => {
+            const opt = document.createElement("option");
+            opt.textContent = log.text;
+            dropdown.appendChild(opt);
+        });
+    }
+
+    //----------------------------------------------------------
+    // 6) Intercept damage.php requests
+    //----------------------------------------------------------
+    const originalFetch = window.fetch;
+
+    window.fetch = async function (input, init) {
+        const isDamage =
+            (typeof input === "string" && input.includes("damage.php")) ||
+            (input.url && input.url.includes("damage.php"));
+
+        if (!isDamage)
+            return originalFetch(input, init);
+
+        const response = await originalFetch(input, init);
+        const clone = response.clone();
+
+        clone.json().then(data => {
+            if (!data) return;
+
+            // Extract last-hit damage from message
+            let hitDmg = 0;
+            if (data.message) {
+                const m = data.message.match(/dealt.*?([\d,]+)/i);
+                if (m && m[1]) hitDmg = Number(m[1].replace(/,/g, ""));
+            }
+
+            // Extract accumulated damage
+            const totalDmg = Number(data.totaldmgdealt || 0);
+
+            // Extract log entry 0 and format it
+            let readableLog = null;
+            if (Array.isArray(data.logs) && data.logs.length > 0) {
+                readableLog = formatLog(data.logs[0]);
+            }
+
+            if (readableLog) {
+                saveLog(readableLog);
+            } else {
+                console.warn("⚠ Log entry missing:", data.logs);
+            }
+
+            // Update UI
+            const ui = ensureUI();
+            if (!ui) return;
+
+            const totalSpan = document.querySelector("#yourDamageValue");
+            if (totalSpan) {
+                totalSpan.textContent = totalDmg.toLocaleString();
+            }
+
+            // If stored logs exist, override Last Hit with last saved entry
+            const lastStored = getLastStoredLogText();
+            if (lastStored) {
+                ui.lastHit.textContent = `(Last Hit: ${lastStored})`;
+            } else {
+                ui.lastHit.textContent = `(Last Hit: ${hitDmg.toLocaleString()})`;
+            }
+
+            refreshDropdown();
+        });
+
+        return response;
+    };
+
+    //----------------------------------------------------------
+    // Initial UI update after DOM loads
+    //----------------------------------------------------------
+    setTimeout(() => {
+    refreshDropdown();
+
+    const ui = ensureUI();
+    if (ui) {
+        const lastStored = getLastStoredLogText();
+        if (lastStored) {
+            ui.lastHit.textContent = `(Last Hit: ${lastStored})`;
+        }
+    }
+}, 800);
+
+
+    function getLastStoredLogText() {
+        const logs = loadLogs();
+        if (logs.length === 0) return null;
+        return logs[0].text; // newest always first
+    }
 
 
 
+})();
