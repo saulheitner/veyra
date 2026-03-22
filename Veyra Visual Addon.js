@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.4.2
+// @version      2.5.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -8308,3 +8308,54 @@ function importCooldowns() {
 }
 //End quests cooldown
 
+//live timer for dungeon pvp 
+(function() {
+    'use strict';
+
+    // Try to find the warning div
+    function start() {
+        const warn = document.querySelector(".warn");
+        if (!warn) return;
+
+        const text = warn.textContent;
+        const match = text.match(/(\d{2}):(\d{2}):(\d{2})/);
+        if (!match) return;
+
+        let hours = parseInt(match[1], 10);
+        let minutes = parseInt(match[2], 10);
+        let seconds = parseInt(match[3], 10);
+
+        // Convert to total seconds
+        let total = hours * 3600 + minutes * 60 + seconds;
+
+        // Create a new span to update
+        const span = document.createElement("span");
+        span.style.fontWeight = "bold";
+
+        // Replace the time in the message with span
+        warn.innerHTML = warn.innerHTML.replace(/(\d{2}:\d{2}:\d{2})/, `<span id="liveTimer"></span>`);
+        const timer = document.querySelector("#liveTimer");
+
+        function update() {
+            if (total <= 0) {
+                timer.textContent = "00:00:00";
+                clearInterval(interval);
+                return;
+            }
+
+            total--;
+
+            const h = String(Math.floor(total / 3600)).padStart(2, "0");
+            const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+            const s = String(total % 60).padStart(2, "0");
+
+            timer.textContent = `${h}:${m}:${s}`;
+        }
+
+        update(); // initial display
+        const interval = setInterval(update, 1000);
+    }
+
+    // Allow page to finish loading dynamic content
+    setTimeout(start, 500);
+})();
