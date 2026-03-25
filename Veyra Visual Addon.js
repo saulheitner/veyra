@@ -363,6 +363,14 @@ window.addEventListener('load', () => {
     const style = document.createElement('style');
     style.textContent = `
 
+    .stage.table-mode .nodeTableView{
+      scrollbar-width: none;
+    }
+    .side {
+      overflow-y: scroll;
+      scrollbar-width: none;
+    }
+
     #battleDrawer {
       overflow-y: scroll;
     }
