@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.5.1
+// @version      2.6.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -8308,7 +8308,7 @@ function importCooldowns() {
 }
 //End quests cooldown
 
-//live timer for dungeon pvp 
+//live timer for dungeon pvp
 (function() {
     'use strict';
 
@@ -8358,4 +8358,65 @@ function importCooldowns() {
 
     // Allow page to finish loading dynamic content
     setTimeout(start, 500);
+})();
+
+
+
+(function() {
+
+    // Run once DOM is ready
+function init() {
+
+    document.querySelectorAll('.match').forEach(match => {
+
+        // Mark as collapsed by default
+        match.dataset.collapsed = "1";
+
+        // Auto-collapse on page load
+        toggleMatch(match, true);
+
+        // Add click listeners to badges
+        match.querySelectorAll('.badge').forEach(badge => {
+
+            badge.style.cursor = "pointer";
+
+            badge.addEventListener('click', () => {
+
+                const collapsed = match.dataset.collapsed === "1";
+                match.dataset.collapsed = collapsed ? "0" : "1";
+
+                toggleMatch(match, !collapsed);
+            });
+
+        });
+    });
+}
+    // Hide everything except matchTop + meta
+function toggleMatch(match, collapse) {
+
+    const keep = ['.matchTop', '.meta'];
+
+    // Adjust container height
+    match.style.minHeight = collapse ? "90px" : "330px";
+
+    Array.from(match.children).forEach(child => {
+
+        const shouldKeep = keep.some(sel => child.matches(sel));
+
+        if (shouldKeep) {
+            child.style.display = "";
+        } else {
+            child.style.display = collapse ? "none" : "";
+        }
+    });
+}
+    // Wait until the .match elements exist
+    function waitForMatches() {
+        const exists = document.querySelector('.match');
+        if (exists) init();
+        else setTimeout(waitForMatches, 300);
+    }
+
+    waitForMatches();
+
 })();
