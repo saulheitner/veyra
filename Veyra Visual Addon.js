@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.6.1
+// @version      2.7.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
 // @author       Daregon
 // @match        https://demonicscans.org/*
+// @grant        GM_xmlhttpRequest
+// @connect      demonicscans.org
 // @license MIT
 // ==/UserScript==
 
@@ -362,6 +364,12 @@ window.addEventListener('load', () => {
 
     const style = document.createElement('style');
     style.textContent = `
+
+    .highlightSelfMark {
+      border: 2px solid gold;
+      box-shadow: 0 0 10px rgba(255, 215, 0, 0.7);
+      background-color: rgba(255, 250, 205, 0.4); /* light golden */
+    }
 
     .stage.table-mode .nodeTableView{
       scrollbar-width: none;
@@ -2374,6 +2382,12 @@ function modMonsterCards() {
 
     const style = document.createElement('style');
     style.textContent = `
+    .monster-container{
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+    }
+
     .monster-card{width:150px;}
     h3{margin:0;}
     .stat-value{font-size: 10px;}
@@ -3864,70 +3878,72 @@ createDungeonCards();
 //  End Guild sidebar section
 
 // Adventurers sidebar section
+// Adventurers sidebar section
 function initAdventurersGuildQuests() {
-    // Fetch and populate adventurers guild quests in sidebar
     const questsContainer = document.getElementById('quest-expanded');
     if (!questsContainer) return;
 
-    // Show loading state
-    questsContainer.innerHTML = '<div style="text-align: center; padding: 15px; color: #6c7086; font-size: 11px;">Loading quests...</div>';
+    questsContainer.innerHTML =
+        '<div style="text-align: center; padding: 15px; color: #6c7086; font-size: 11px;">Loading quests...</div>';
 
-    // Fetch adventures page
     fetch('https://demonicscans.org/adventurers_guild.php', {
-            credentials: 'include',
-            mode: 'same-origin'
-        })
+        credentials: 'include',
+        mode: 'same-origin'
+    })
         .then(response => response.text())
         .then(html => {
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
 
-            // Extract available quests - updated selectors to match actual HTML structure
             const availableQuests = [];
+            const activeQuests = [];
+
+            // -------------------------
+            // EXTRACT AVAILABLE QUESTS
+            // -------------------------
             const availableQuestElements = doc.querySelectorAll('.quest-list .quest-row');
             availableQuestElements.forEach(questEl => {
-                // Check if this is an active quest by looking for progress indicators
                 const progress = questEl.querySelector('.quest-progress')?.textContent?.trim();
                 const hasProgress = progress && progress.includes('Progress:');
 
-                // Only add to available quests if it doesn't have progress (not active)
                 if (!hasProgress) {
                     const title = questEl.querySelector('.quest-main-title')?.textContent?.trim();
                     const description = questEl.querySelector('.quest-main-desc')?.textContent?.trim();
                     const reward = questEl.querySelector('.quest-reward')?.textContent?.trim();
 
-                    // Extract quest ID from accept button
+                    // Extract timer from native page
+                    const cooldownTimer = questEl.querySelector('.quest-cooldown-timer');
+                    let cooldownTS = null;
+                    if (cooldownTimer) {
+                        cooldownTS = cooldownTimer.getAttribute('data-cooldown-ts');
+                    }
+
                     const acceptBtn = questEl.querySelector('.quest-accept-btn');
                     let questId = null;
                     if (acceptBtn) {
                         const onclickStr = acceptBtn.getAttribute('onclick') || '';
                         const match = onclickStr.match(/acceptQuest\((\d+)/);
-                        if (match) {
-                            questId = match[1];
-                        }
+                        if (match) questId = match[1];
                     }
 
-                    if (title) {
-                        // Check if this quest is already in the array to prevent duplicates
-                        const existingQuest = availableQuests.find(q => q.title === title);
-                        if (!existingQuest) {
-                            availableQuests.push({
-                                title: title,
-                                description: description || 'No description available',
-                                reward: reward || 'No reward specified',
-                                questId: questId,
-                                type: 'available'
-                            });
-                        }
+                    if (title && !availableQuests.find(q => q.title === title)) {
+                        availableQuests.push({
+                            title,
+                            description: description || 'No description available',
+                            reward: reward || 'No reward specified',
+                            questId,
+                            cooldownTS,
+                            type: 'available'
+                        });
                     }
                 }
             });
 
-            // Extract active quests - look for active quest section
-            const activeQuests = [];
+            // -------------------------
+            // EXTRACT ACTIVE QUESTS
+            // -------------------------
             const activeQuestElements = doc.querySelectorAll('.quest-list .quest-row');
             activeQuestElements.forEach(questEl => {
-                // Check if this is an active quest by looking for progress or specific indicators
                 const progress = questEl.querySelector('.quest-progress')?.textContent?.trim();
                 const hasProgress = progress && progress.includes('Progress:');
 
@@ -3936,19 +3952,18 @@ function initAdventurersGuildQuests() {
                     const description = questEl.querySelector('.quest-main-desc')?.textContent?.trim();
                     const timeLeft = questEl.querySelector('.quest-time')?.textContent?.trim();
 
-                    // Extract quest action from give up, finish, or donate button
-                    // Prioritize donate button over give up button
                     const giveUpBtn = questEl.querySelector('.quest-giveup-btn');
                     const finishBtn = questEl.querySelector('.quest-finish-btn');
                     const donateBtn = questEl.querySelector('.quest-donate-btn');
+
                     let questId = null;
                     let actionType = null;
                     let actionLabel = null;
                     let itemId = null;
 
                     if (donateBtn) {
-                        const onclickStr = donateBtn.getAttribute('onclick') || '';
-                        const match = onclickStr.match(/donateGatherItem\((\d+),\s*(\d+)/);
+                        const match = donateBtn.getAttribute('onclick')
+                            .match(/donateGatherItem\((\d+),\s*(\d+)/);
                         if (match) {
                             questId = match[1];
                             itemId = match[2];
@@ -3956,16 +3971,16 @@ function initAdventurersGuildQuests() {
                             actionLabel = 'Donate';
                         }
                     } else if (finishBtn) {
-                        const onclickStr = finishBtn.getAttribute('onclick') || '';
-                        const match = onclickStr.match(/finishQuest\((\d+)/);
+                        const match = finishBtn.getAttribute('onclick')
+                            .match(/finishQuest\((\d+)/);
                         if (match) {
                             questId = match[1];
                             actionType = 'finish';
                             actionLabel = 'Finish quest';
                         }
                     } else if (giveUpBtn) {
-                        const onclickStr = giveUpBtn.getAttribute('onclick') || '';
-                        const match = onclickStr.match(/giveUpQuest\((\d+)/);
+                        const match = giveUpBtn.getAttribute('onclick')
+                            .match(/giveUpQuest\((\d+)/);
                         if (match) {
                             questId = match[1];
                             actionType = 'giveUp';
@@ -3973,108 +3988,119 @@ function initAdventurersGuildQuests() {
                         }
                     }
 
-                    if (title) {
-                        // Check if this quest is already in the array to prevent duplicates
-                        const existingQuest = activeQuests.find(q => q.title === title);
-                        if (!existingQuest) {
-                            activeQuests.push({
-                                title: title,
-                                progress: progress || 'In progress',
-                                timeLeft: timeLeft || 'Unknown time remaining',
-                                questId: questId,
-                                itemId: itemId,
-                                actionType: actionType,
-                                actionLabel: actionLabel,
-                                type: 'active'
-                            });
-                        }
+                    if (title && !activeQuests.find(q => q.title === title)) {
+                        activeQuests.push({
+                            title,
+                            progress,
+                            timeLeft,
+                            questId,
+                            itemId,
+                            actionType,
+                            actionLabel,
+                            type: 'active'
+                        });
                     }
                 }
             });
 
-            // Build HTML for quests
+            // -------------------------------------
+            // BUILD SIDEBAR HTML
+            // -------------------------------------
             let questsHTML = '';
 
-            if (availableQuests.length > 0) {
-                availableQuests.forEach(quest => {
-                    questsHTML += `
+            // Available Quests
+            availableQuests.forEach(quest => {
+                questsHTML += `
+                <div class="sidebar-quest tm-clickable"
+                     data-q-title="${escapeHtml(quest.title)}"
+                     data-q-type="Available"
+                     data-q-description="${escapeHtml(quest.description)}"
+                     data-q-reward="${escapeHtml(quest.reward)}"
+                     style="margin-bottom: 8px; padding: 6px; background: rgba(30,30,46,0.5);
+                     border-radius: 4px; border-left: 2px solid #89b4fa;">
 
-        <div class="sidebar-quest tm-clickable"
-             data-q-title="${escapeHtml(quest.title)}"
-             data-q-type="Available"
-             data-q-description="${escapeHtml(quest.description)}"
-             data-q-reward="${escapeHtml(quest.reward)}"
-             style
-        ="margin-bottom: 8px; padding: 6px; background: rgba(30, 30, 46, 0.5); border-radius: 4px; border-left: 2px solid #89b4fa;">
-            <div class="quest-title" style="font-weight: bold; color: #cdd6f4; font-size: 10px; margin-bottom: 3px;">${quest.title}</div>
-            <div class="quest-details" style="color: #6c7086; font-size: 9px; margin-bottom: 2px;">${quest.description}</div>
-            <div class="quest-reward" style="color: #a6e3a1; font-size: 9px; margin-bottom: 4px;">Reward: ${quest.reward}</div>
-            ${quest.questId ? `<button class="quest-accept-btn" type="button" data-quest-id="${quest.questId}" style="background: #89b4fa; color: white; border: none; border-radius: 3px; padding: 2px 6px; font-size: 9px; cursor: pointer;">Accept quest</button>` : ''}
-          </div>
-        `;
-                });
-                questsHTML += '</div>';
-            }
+                    <div class="quest-title" style="font-weight: bold; color: #cdd6f4; font-size: 10px;">
+                        ${quest.title}
+                    </div>
+                    <div class="quest-details" style="color:#6c7086; font-size:9px;">
+                        ${quest.description}
+                    </div>
+                    <div class="quest-reward" style="color:#a6e3a1; font-size:9px;">
+                        Reward: ${quest.reward}
+                    </div>
 
+                    ${quest.questId ? `
+                        <button class="quest-accept-btn"
+                                type="button"
+                                data-quest-id="${quest.questId}"
+                                style="background:#89b4fa; color:white; border:none; border-radius:3px;
+                                padding:2px 6px; font-size:9px; cursor:pointer;">
+                            Accept quest
+                        </button>` : ''}
+
+                    ${quest.cooldownTS ? `
+                        <div class="sidebar-cooldown-timer"
+                             data-cooldown-ts="${quest.cooldownTS}"
+                             style="color:#fab387; font-size:9px; margin-top:4px;">
+                            Loading timer...
+                        </div>
+                    ` : ''}
+                </div>`;
+            });
+
+            // Active quests
             if (activeQuests.length > 0) {
-                questsHTML += '<div><div style="font-weight: bold; color: #f9e2af; margin-bottom: 8px; font-size: 11px;">⚡ Active Quests</div>';
+                questsHTML += `
+                <div><div style="font-weight:bold; color:#f9e2af; margin-bottom:8px; font-size:11px;">
+                    ⚡ Active Quests
+                </div></div>
+                `;
+
                 activeQuests.forEach(quest => {
                     questsHTML += `
+                    <div class="sidebar-quest tm-clickable"
+                         data-q-title="${escapeHtml(quest.title)}"
+                         data-q-type="Active"
+                         data-q-progress="${escapeHtml(quest.progress)}"
+                         data-q-time="${escapeHtml(quest.timeLeft)}"
+                         style="margin-bottom:8px; padding:6px; background:rgba(30,30,46,0.5);
+                         border-radius:4px; border-left:2px solid #f9e2af;">
 
-<div class="sidebar-quest tm-clickable"
-     data-q-title="${escapeHtml(quest.title)}"
-     data-q-type="Active"
-     data-q-progress="${escapeHtml(quest.progress)}"
-     data-q-time="${escapeHtml(quest.timeLeft)}"
-     style
-="margin-bottom: 8px; padding: 6px; background: rgba(30, 30, 46, 0.5); border-radius: 4px; border-left: 2px solid #f9e2af;">
-            <div class="quest-title" style="font-weight: bold; color: #cdd6f4; font-size: 10px; margin-bottom: 3px;">${quest.title}</div>
-            <div class="quest-progress" style="color: #6c7086; font-size: 9px; margin-bottom: 2px;">${quest.progress}</div>
-            <div class="quest-time" style="color: #eba0ac; font-size: 9px; margin-bottom: 4px;">${quest.timeLeft}</div>
-            ${quest.questId && quest.actionType ? `<button class="quest-${quest.actionType}-btn" type="button" data-quest-id="${quest.questId}" data-action-type="${quest.actionType}" ${quest.itemId ? `data-item-id="${quest.itemId}"` : ''} style="background: ${quest.actionType === 'giveUp' ? '#f38ba8' : quest.actionType === 'donate' ? '#fab387' : '#a6e3a1'}; color: white; border: none; border-radius: 3px; padding: 2px 6px; font-size: 9px; cursor: pointer; margin-top: 2px;">${quest.actionLabel}</button>` : ''}
-          </div>
-        `;
+                        <div class="quest-title" style="font-weight:bold; color:#cdd6f4; font-size:10px;">
+                            ${quest.title}
+                        </div>
+                        <div class="quest-progress" style="color:#6c7086; font-size:9px;">
+                            ${quest.progress}
+                        </div>
+                        <div class="quest-time" style="color:#eba0ac; font-size:9px;">
+                            ${quest.timeLeft}
+                        </div>
+
+                        ${quest.questId && quest.actionType ? `
+                            <button class="quest-${quest.actionType}-btn"
+                                    type="button"
+                                    data-quest-id="${quest.questId}"
+                                    data-action-type="${quest.actionType}"
+                                    ${quest.itemId ? `data-item-id="${quest.itemId}"` : ''}
+                                    style="background:${quest.actionType === 'giveUp'
+                                        ? '#f38ba8' : quest.actionType === 'donate'
+                                        ? '#fab387' : '#a6e3a1'};
+                                    color:white; border:none; border-radius:3px;
+                                    padding:2px 6px; font-size:9px; cursor:pointer; margin-top:2px;">
+                                ${quest.actionLabel}
+                            </button>`
+                        : ''}
+                    </div>`;
                 });
-                questsHTML += '</div>';
-            }
-
-            if (availableQuests.length === 0 && activeQuests.length === 0) {
-                const cooldowns = JSON.parse(localStorage.getItem("quest_cooldowns") || "{}");
-                const now = Date.now();
-                let cdHTML = `<div style="text-align:center; padding: 10px; font-weight:bold; color:#cdd6f4; font-size:12px;">Quest Cooldowns</div>`;
-
-                const entries = Object.entries(cooldowns);
-
-                if (entries.length === 0) {
-                    cdHTML += `<div style="text-align:center; padding: 15px; color:#6c7086; font-size:11px; font-style:italic;">No cooldowns found</div>`;
-                } else {
-                    entries.forEach(([id, q]) => {
-                        const remaining = q.availableAt - now;
-                        const status = remaining <= 0 ? "READY" : formatTime(remaining);
-
-                        cdHTML += `
-            <div style="margin-bottom:8px; padding:6px; background:rgba(30,30,46,0.45); border-radius:4px; border-left:2px solid ${
-                remaining <= 0 ? "#a6e3a1" : "#fab387"
-            };">
-                <div style="font-weight:bold; font-size:10px; color:#cdd6f4;">${q.name}</div>
-                <div style="font-size:9px; color:${
-                    remaining <= 0 ? "lightgreen" : "orange"
-                };">${status}</div>
-            </div>`;
-                    });
-                }
-
-                questsHTML = cdHTML;
             }
 
             questsContainer.innerHTML = questsHTML;
-            questsContainer.addEventListener('click', (e) => {
-                // If user clicked a button, let the button handler run
-                if (e.target.closest('button')) return;
 
+            // Clicking quest card opens modal
+            questsContainer.addEventListener('click', e => {
+                if (e.target.closest('button')) return;
                 const card = e.target.closest('.sidebar-quest');
                 if (!card) return;
-
                 openQuestModal({
                     title: card.dataset.qTitle,
                     type: card.dataset.qType,
@@ -4085,32 +4111,83 @@ function initAdventurersGuildQuests() {
                 });
             });
 
+            // -------------------------------
+            // ADD BUTTON EVENT HANDLERS
+            // -------------------------------
+            questsContainer.querySelectorAll(`
+                .quest-giveUp-btn,
+                .quest-finish-btn,
+                .quest-accept-btn,
+                .quest-donate-btn
+            `).forEach(btn => {
+                btn.addEventListener('click', function () {
+                    const questId = this.dataset.questId;
+                    const actionType = this.classList.contains('quest-accept-btn')
+                        ? 'accept'
+                        : this.classList.contains('quest-giveUp-btn')
+                            ? 'giveUp'
+                            : this.classList.contains('quest-donate-btn')
+                                ? 'donate'
+                                : 'finish';
 
-            // Add event listeners to quest action buttons
-            const questButtons = questsContainer.querySelectorAll('.quest-giveUp-btn, .quest-finish-btn, .quest-accept-btn, .quest-donate-btn');
-            questButtons.forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const questId = this.getAttribute('data-quest-id');
-                    const actionType = this.classList.contains('quest-accept-btn') ? 'accept' :
-                        this.classList.contains('quest-giveUp-btn') ? 'giveUp' :
-                        this.classList.contains('quest-donate-btn') ? 'donate' : 'finish';
                     if (actionType === 'accept') {
                         sidebarAcceptQuest(questId, this);
                     } else if (actionType === 'donate') {
-                        const itemId = this.getAttribute('data-item-id');
-                        sidebarDonateQuest(questId, itemId, this);
+                        sidebarDonateQuest(questId, this.dataset.itemId, this);
                     } else {
                         sidebarQuestAction(actionType, questId, this);
                     }
                 });
             });
+
+            // ----------------------------------------------------
+            // START COOLDOWN TIMER ENGINE (NEW)
+            // ----------------------------------------------------
+            startSidebarCooldownTimers();
         })
         .catch(error => {
             console.error('Error fetching adventurers guild quests:', error);
-            questsContainer.innerHTML = '<div style="text-align: center; padding: 15px; color: #f38ba8; font-size: 11px;">Failed to load quests</div>';
+            questsContainer.innerHTML = `
+                <div style="text-align:center; padding:15px; color:#f38ba8; font-size:11px;">
+                    Failed to load quests
+                </div>`;
         });
 }
 
+
+// -------------------------------------------
+// LIVE SIDEBAR COOLDOWN TIMER ENGINE
+// -------------------------------------------
+function startSidebarCooldownTimers() {
+    const timerEls = document.querySelectorAll('.sidebar-cooldown-timer');
+    if (timerEls.length === 0) return;
+
+    function updateTimers() {
+        const now = Math.floor(Date.now() / 1000);
+
+        timerEls.forEach(el => {
+            const ts = parseInt(el.dataset.cooldownTs);
+            const remaining = ts - now;
+
+            if (remaining <= 0) {
+                el.textContent = "READY";
+                el.style.color = "#a6e3a1";
+                return;
+            }
+
+            const d = Math.floor(remaining / 86400);
+            const h = Math.floor((remaining % 86400) / 3600);
+            const m = Math.floor((remaining % 3600) / 60);
+            const s = remaining % 60;
+
+            el.textContent =
+                `Available in ${d}d ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        });
+    }
+
+    updateTimers();
+    setInterval(updateTimers, 1000);
+}
 function sidebarDonateQuest(questId, itemId, btn) {
     // Create quantity input popup
     const existingPopup = document.getElementById('quest-donate-popup');
@@ -8128,194 +8205,6 @@ function escapeHtml(str) {
     init();
 })();
 
-
-//quests cooldown
-const STORAGE_KEY = "quest_cooldowns";
-const COOLDOWN_MS = 72 * 60 * 60 * 1000; // 72 hours
-
-function loadCooldowns() {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-}
-
-function saveCooldowns(data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-}
-
-function formatTime(ms) {
-    if (ms <= 0) return "READY";
-
-    let totalSeconds = Math.floor(ms / 1000);
-    let hours = Math.floor(totalSeconds / 3600);
-    let minutes = Math.floor((totalSeconds % 3600) / 60);
-
-    return `${hours}h ${minutes}m`;
-}
-
-// Detect "Finish quest" button clicked
-function hookFinishButtons() {
-    document.querySelectorAll(".quest-finish-btn").forEach(btn => {
-        if (btn.dataset.cooldownHooked) return;
-        btn.dataset.cooldownHooked = "1";
-        btn.addEventListener("click", () => {
-
-            // Try main-page style onclick parser
-            let onClick = btn.getAttribute("onclick");
-            let match = onClick ? onClick.match(/finishQuest\((\d+)/) : null;
-
-            let questID = null;
-
-            if (match) {
-                questID = match[1]; // main page finish
-            } else {
-                // Use sidebar’s data attribute
-                questID = btn.dataset.questId;
-            }
-
-            if (!questID) return;
-
-            let title = btn.closest(".quest-row, .sidebar-quest")
-                ?.querySelector(".quest-main-title, .quest-title")
-                ?.innerText.trim();
-
-            let data = loadCooldowns();
-            data[questID] = {
-                name: title,
-                completedAt: Date.now(),
-                availableAt: Date.now() + COOLDOWN_MS
-            };
-            saveCooldowns(data);
-
-            console.log("Quest logged (sidebar or main):", questID, title);
-        });
-
-
-    });
-}
-
-// Display cooldown section
-function renderCooldownList() {
-    let data = loadCooldowns();
-    let now = Date.now();
-
-    // Locate the parent section (the one you showed)
-    let questSection = document.querySelector("section.section.quests-section");
-    if (!questSection) return;
-
-    // Create or update the cooldown container
-    let box = document.getElementById("questCooldownBox");
-    if (!box) {
-        box = document.createElement("div");
-        box.id = "questCooldownBox";
-
-        // Styling
-        box.style.marginTop = "20px";
-        box.style.padding = "12px";
-        box.style.border = "1px solid rgba(31, 41, 55, 0.9)";
-        box.style.background = "rgba(0,0,0,0.35)";
-        box.style.color = "white";
-        box.style.fontSize = "14px";
-        box.style.borderRadius = "8px";
-
-        // Insert as the LAST element inside the section
-        questSection.appendChild(box);
-    }
-
-    // Build display
-    let html = `<div style="font-size:16px; margin-bottom:8px;"><strong>Quest Cooldowns</strong>
-        <button id="qtExportBtn" class="adv-shop-buy-btn" style="margin-right:6px;">Export</button>
-    <button id="qtImportBtn" class="adv-shop-buy-btn" >Import</button>
-    </div>`;
-
-    let hasAny = false;
-    for (let id in data) {
-        hasAny = true;
-        let q = data[id];
-        let remaining = q.availableAt - now;
-        if (remaining <= 0) continue;
-        let status = formatTime(remaining);
-
-        html += `
-            <div style="margin-bottom:6px;">
-                <strong>${q.name}</strong><br>
-                <span style="color:${remaining <= 0 ? "lightgreen" : "orange"};">
-                    ${status}
-                </span>
-            </div>
-        `;
-    }
-
-    if (!hasAny) {
-        html += `<i>No completed timed quests yet.</i>`;
-    }
-
-    box.innerHTML = html;
-    setTimeout(() => {
-        const exportBtn = document.getElementById("qtExportBtn");
-        const importBtn = document.getElementById("qtImportBtn");
-
-        if (exportBtn) exportBtn.onclick = exportCooldowns;
-        if (importBtn) importBtn.onclick = importCooldowns;
-    }, 100);
-}
-
-// Auto-update timers every minute
-setInterval(renderCooldownList, 60 * 1000);
-
-// Initial load
-setInterval(hookFinishButtons, 500);
-renderCooldownList();
-
-function exportCooldowns() {
-    const data = loadCooldowns();
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-        type: "application/json"
-    });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "quest_cooldowns.json";
-    a.click();
-
-    URL.revokeObjectURL(url);
-}
-
-function importCooldowns() {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "application/json";
-
-    input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = () => {
-            try {
-                const imported = JSON.parse(reader.result);
-
-                // Merge with existing data
-                const existing = loadCooldowns();
-                const merged = {
-                    ...existing,
-                    ...imported
-                };
-
-                saveCooldowns(merged);
-                alert("Cooldowns successfully imported!");
-
-                renderCooldownList(); // refresh UI
-            } catch (err) {
-                alert("Invalid file format.");
-            }
-        };
-        reader.readAsText(file);
-    };
-
-    input.click();
-}
-//End quests cooldown
-
 //live timer for dungeon pvp
 (function() {
     'use strict';
@@ -8368,9 +8257,9 @@ function importCooldowns() {
     setTimeout(start, 500);
 })();
 
-
-
+//dungeon pvp match collapser
 (function() {
+
 
     // Run once DOM is ready
 function init() {
@@ -8398,14 +8287,18 @@ function init() {
 
         });
     });
+
+    applyStatusOrder();
+    highlightSelfMarked();
+
 }
     // Hide everything except matchTop + meta
 function toggleMatch(match, collapse) {
 
-    const keep = ['.matchTop', '.meta'];
+    const keep = ['.matchTop', '.meta','.slots'];
 
     // Adjust container height
-    match.style.minHeight = collapse ? "90px" : "330px";
+    match.style.minHeight = collapse ? "120px" : "330px";
 
     Array.from(match.children).forEach(child => {
 
@@ -8424,7 +8317,245 @@ function toggleMatch(match, collapse) {
         if (exists) init();
         else setTimeout(waitForMatches, 300);
     }
-
     waitForMatches();
 
+
+function applyStatusOrder() {
+    const orderMap = {
+        open: 2,
+        live: 3,
+        cleared: 4
+    };
+
+    document.querySelectorAll('.match').forEach(match => {
+        const badge = match.querySelector('.badge');
+        const slots = match.querySelector('.slots .slot.selfMark');
+
+        // If selfMark present → go to top
+        if (slots) {
+            match.style.order = 1;   // highest priority
+            return;
+        }
+
+        // Otherwise use regular status order
+        if (badge) {
+            const status = badge.textContent.trim().toLowerCase();
+            match.style.order = orderMap[status] || 99;
+        }
+    });
+}
+
+    function highlightSelfMarked() {
+    document.querySelectorAll('.match').forEach(match => {
+
+        // This finds .selfMark even if deeply nested
+        const hasSelfMark = match.querySelector('.slots .slot .selfMark');
+
+        if (hasSelfMark) {
+            match.classList.add('highlightSelfMark');
+        } else {
+            match.classList.remove('highlightSelfMark');
+        }
+    });
+}
+
 })();
+
+//cube dg scroll + filter
+(function () {
+    'use strict';
+
+    /* -------------------------------------------
+       Inject DARK THEME STYLES to match Crucible
+    ------------------------------------------- */
+    function injectStyles() {
+        const style = document.createElement("style");
+        style.textContent = `
+
+        /* --- FILTER ROW --- */
+        .filterRow th {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 6px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+        }
+
+        /* --- SELECT DROPDOWNS --- */
+        .filterRow select {
+            width: 100%;
+            padding: 4px 6px;
+            border-radius: 6px;
+            background: rgba(23, 28, 45, 0.9);
+            color: #d0d8e8;
+            border: 1px solid rgba(120, 160, 255, 0.25);
+            font-size: 12px;
+            outline: none;
+        }
+
+        .filterRow select:hover {
+            border-color: rgba(160, 200, 255, 0.45);
+        }
+
+        .filterRow select:focus {
+            border-color: rgba(190, 220, 255, 0.75);
+            box-shadow: 0 0 6px rgba(100, 150, 255, 0.4);
+        }
+
+        /* --- HEADER SORTING ARROWS --- */
+        th.sort-asc::after {
+            content: " ▲";
+            color: #9ec9ff;
+        }
+        th.sort-desc::after {
+            content: " ▼";
+            color: #9ec9ff;
+        }
+
+        /* --- MAKE HEADER MATCH THE THEME --- */
+        .nodeTable th {
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.03);
+            color: #e0e6f0;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.05em;
+        }
+
+        /* --- ROW HOVER --- */
+        .nodeTable tbody tr:hover {
+            background: rgba(255, 255, 255, 0.04) !important;
+        }
+
+        `;
+        document.head.appendChild(style);
+    }
+
+    /* -------------------------------------------
+       SORT + FILTER main function
+    ------------------------------------------- */
+    function enhanceTable() {
+        const table = document.querySelector(".nodeTable");
+        if (!table) return;
+
+        const thead = table.querySelector("thead");
+        const headers = thead.querySelectorAll("th");
+
+        /* -------------------------------------------
+           BUILD FILTER ROW
+        ------------------------------------------- */
+        const filterRow = document.createElement("tr");
+        filterRow.classList.add("filterRow");
+
+        headers.forEach((th, colIndex) => {
+            const filterCell = document.createElement("th");
+            const select = document.createElement("select");
+
+            select.innerHTML = `<option value="">(All)</option>`;
+
+            // Collect unique values
+            const columnValues = new Set();
+            table.querySelectorAll("tbody tr").forEach(row => {
+                const cell = row.children[colIndex];
+                if (!cell) return;
+
+                const text = cell.innerText.trim();
+                if (text.length > 0) columnValues.add(text);
+            });
+
+            [...columnValues]
+                .sort()
+                .forEach(value => {
+                    const opt = document.createElement("option");
+                    opt.value = value;
+                    opt.textContent = value;
+                    select.appendChild(opt);
+                });
+
+            select.addEventListener("change", applyFilters);
+
+            filterCell.appendChild(select);
+            filterRow.appendChild(filterCell);
+        });
+
+        thead.appendChild(filterRow);
+
+        /* -------------------------------------------
+           SORTING
+        ------------------------------------------- */
+        headers.forEach((th, index) => {
+            th.addEventListener("click", () => {
+                const tbody = table.querySelector("tbody");
+                const rows = Array.from(tbody.querySelectorAll("tr"));
+
+                const currentSort = th.dataset.sort || "none";
+                const newSort = currentSort === "asc" ? "desc" : "asc";
+
+                headers.forEach(h => h.removeAttribute("data-sort"));
+                th.dataset.sort = newSort;
+
+                rows.sort((a, b) => {
+                    const aText = a.children[index]?.innerText.trim().toLowerCase() || "";
+                    const bText = b.children[index]?.innerText.trim().toLowerCase() || "";
+
+                    const aNum = parseFloat(aText);
+                    const bNum = parseFloat(bText);
+
+                    const numeric = !isNaN(aNum) && !isNaN(bNum);
+
+                    if (numeric) {
+                        return newSort === "asc" ? aNum - bNum : bNum - aNum;
+                    }
+
+                    return newSort === "asc"
+                        ? aText.localeCompare(bText)
+                        : bText.localeCompare(aText);
+                });
+
+                tbody.innerHTML = "";
+                rows.forEach(row => tbody.appendChild(row));
+
+                applyFilters();
+            });
+        });
+
+        /* -------------------------------------------
+           FILTER FUNCTION
+        ------------------------------------------- */
+        function applyFilters() {
+            const tbody = table.querySelector("tbody");
+            const rows = [...tbody.querySelectorAll("tr")];
+            const selectors = filterRow.querySelectorAll("select");
+
+            rows.forEach(row => {
+                let visible = true;
+
+                selectors.forEach((select, i) => {
+                    const filterValue = select.value;
+                    const cellValue = row.children[i]?.innerText.trim() || "";
+
+                    if (filterValue && cellValue !== filterValue) {
+                        visible = false;
+                    }
+                });
+
+                row.style.display = visible ? "" : "none";
+            });
+        }
+    }
+
+    /* -------------------------------------------
+       MutationObserver waits for the table
+    ------------------------------------------- */
+    const observer = new MutationObserver(() => {
+        const table = document.querySelector(".nodeTable");
+        if (table) {
+            injectStyles();
+            enhanceTable();
+            observer.disconnect();
+        }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+})();
+
+
