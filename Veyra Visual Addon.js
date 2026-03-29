@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.7.1
+// @version      2.8.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -8557,5 +8557,306 @@ function applyStatusOrder() {
 
     observer.observe(document.body, { childList: true, subtree: true });
 })();
+
+//Cube dungeon Leaderboard
+(function () {
+    'use strict';
+
+    if (!/guild_dungeon_cube\.php$/.test(window.location.pathname)) return;
+
+    const dungeonId = new URL(window.location.href).searchParams.get("id") || "default";
+    const instanceId = new URL(window.location.href).searchParams.get("instance_id") || dungeonId;
+
+    // CORE DATA
+    const players = {};
+    const mobs = {};
+    const mobQueue = [];
+
+    let totalLocations = 0;
+    let processedLocations = 0;
+    let totalMobs = 0;
+    let processedMobs = 0;
+    let activeRequests = 0;
+
+    const CACHE_KEY = `dungeon_scan_cache_${dungeonId}`;
+    const CACHE_CONFIG_KEY = `dungeon_cache_config_${dungeonId}`;
+
+    // ---------------- CACHE ----------------
+    function getCacheDuration() {
+        const conf = JSON.parse(localStorage.getItem(CACHE_CONFIG_KEY) || "{}");
+        return conf.durationHours ? conf.durationHours * 3600000 : 12 * 3600000;
+    }
+
+    function saveCache() {
+        try {
+            const data = {
+                savedAt: Date.now(),
+                players,
+                mobs
+            };
+            localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+        } catch (e) {}
+    }
+
+    function loadCache() {
+        try {
+            const raw = localStorage.getItem(CACHE_KEY);
+            if (!raw) return null;
+
+            const data = JSON.parse(raw);
+            if (!data.savedAt) return null;
+
+            if (Date.now() - data.savedAt > getCacheDuration()) return null;
+
+            return data;
+        } catch {
+            return null;
+        }
+    }
+
+    // ---------------- ASIDE TARGET ----------------
+    function getAside() {
+        return document.querySelector("aside.panel.side.side-focus");
+    }
+
+    // ---------------- LOADING BOX ----------------
+    function insertLoadingPVEBox() {
+        const aside = getAside();
+        if (!aside) return;
+
+        const firstBox = aside.querySelector(".box");
+
+        const loadingBox = document.createElement("div");
+        loadingBox.className = "box";
+        loadingBox.id = "pve_loading_box";
+
+        loadingBox.innerHTML = `
+            <div class="k">PvE Leaderboard</div>
+            <p style="padding:10px;color:#ccc;">⏳ Loading PvE Leaderboard…</p>
+        `;
+
+        if (firstBox) firstBox.insertAdjacentElement("afterend", loadingBox);
+        else aside.appendChild(loadingBox);
+    }
+
+    // ---------------- FORCE RESCAN BUTTON (INSIDE BOX, RIGHT SIDE) ----------------
+    function createForceRescanButton() {
+        return `
+            <button id="pve_force_rescan_btn"
+                style="
+                    float: right;
+                    padding: 5px 8px;
+                    border-radius: 6px;
+                    background: #ff6b6b;
+                    color: #000;
+                    font-weight: 700;
+                    border: none;
+                    cursor: pointer;
+                    margin-top: -2px;
+                ">
+                Rescan
+            </button>
+        `;
+    }
+
+    // ---------------- FINAL LEADERBOARD ----------------
+    function insertPVELeaderboard() {
+        const totals = [];
+
+        // Aggregate total damage
+        for (const [playerName, pdata] of Object.entries(players)) {
+            let sum = 0;
+
+            for (const [mobName] of Object.entries(pdata.mobs)) {
+                const mobInstances = mobs[mobName]?.instances || {};
+                for (const inst of Object.values(mobInstances)) {
+                    if (inst.players[playerName]) {
+                        sum += inst.players[playerName];
+                    }
+                }
+            }
+
+            totals.push({ playerName, damage: sum });
+        }
+
+        totals.sort((a, b) => b.damage - a.damage);
+
+        const aside = getAside();
+        if (!aside) return;
+
+        // Remove loading
+        const loadingBox = document.getElementById("pve_loading_box");
+        if (loadingBox) loadingBox.remove();
+
+        // Build leaderboard box
+        const box = document.createElement("div");
+        box.className = "box";
+        box.id = "pve_final_box";
+
+        box.innerHTML = `
+            <div class="k">
+                PvE Leaderboard
+                ${createForceRescanButton()}
+            </div>
+            <div style="clear: both;"></div>
+
+            <div class="list" id="pveLeadersBox"></div>
+        `;
+
+        const listDiv = box.querySelector("#pveLeadersBox");
+
+        totals.forEach((entry, index) => {
+            const hero = document.createElement("div");
+            hero.className = "hero";
+            hero.innerHTML = `
+                <div>
+                    <strong>#${index + 1} — ${entry.playerName}</strong>
+                    <small>${entry.damage.toLocaleString()} total PvE damage</small>
+                </div>
+            `;
+            listDiv.appendChild(hero);
+        });
+
+        const firstBox = aside.querySelector(".box");
+        if (firstBox) firstBox.insertAdjacentElement("afterend", box);
+        else aside.appendChild(box);
+
+        // Attach handler
+        document.getElementById("pve_force_rescan_btn").onclick = () => forceRescan();
+    }
+
+    // ---------------- FORCE RESCAN ----------------
+    function forceRescan() {
+        localStorage.removeItem(CACHE_KEY);
+
+        for (const k in players) delete players[k];
+        for (const k in mobs) delete mobs[k];
+        mobQueue.length = 0;
+
+        totalLocations = 0;
+        processedLocations = 0;
+        totalMobs = 0;
+        processedMobs = 0;
+        activeRequests = 0;
+
+        const oldLoading = document.getElementById("pve_loading_box");
+        const oldFinal = document.getElementById("pve_final_box");
+        if (oldLoading) oldLoading.remove();
+        if (oldFinal) oldFinal.remove();
+
+        insertLoadingPVEBox();
+        location.reload();
+    }
+
+    // ---------------- CACHE LOAD ----------------
+    const cached = loadCache();
+    if (cached) {
+        Object.assign(players, cached.players);
+        Object.assign(mobs, cached.mobs);
+
+        insertLoadingPVEBox();
+        insertPVELeaderboard();
+        return;
+    }
+
+    // ---------------- FIRST RUN ----------------
+    insertLoadingPVEBox();
+
+    const locationIds = [11, 12, 13, 14];
+    const base = "/guild_dungeon_location.php?instance_id=" + instanceId + "&location_id=";
+
+    const urls = locationIds.map(id => base + id);
+    totalLocations = urls.length;
+
+    urls.forEach(url => {
+        GM_xmlhttpRequest({
+            method: "GET",
+            url,
+            onload: res => {
+                processedLocations++;
+
+                const doc = new DOMParser().parseFromString(res.responseText, "text/html");
+                const monDivs = [...doc.querySelectorAll(".mon")];
+
+                monDivs.forEach(mon => {
+                    let name = mon.querySelector("div[style*='font-weight']")?.textContent.trim() ?? "Unknown Mob";
+                    name = name.replace(/\(.*?\)/, "").trim();
+
+                    const battleLink = mon.querySelector('a.btn[href*="battle.php"]');
+                    if (!battleLink) return;
+
+                    const mobId = battleLink.href.match(/dgmid=(\d+)/)?.[1] ||
+                        Math.random().toString(36).slice(2);
+
+                    mobQueue.push({ url: battleLink.href, mobName: name, mobId });
+
+                    if (!mobs[name]) mobs[name] = { instances: {} };
+                    mobs[name].instances[mobId] = { url: battleLink.href, players: {} };
+                });
+
+                totalMobs = mobQueue.length;
+                if (processedLocations >= totalLocations) startMobCrawl();
+            }
+        });
+    });
+
+    // ---------------- MOBS CRAWLER ----------------
+    function startMobCrawl() {
+        for (let i = 0; i < 4; i++) fetchNextMob();
+    }
+
+    function fetchNextMob() {
+        if (mobQueue.length === 0) {
+            if (activeRequests === 0) finalizeScan();
+            return;
+        }
+
+        const job = mobQueue.shift();
+        activeRequests++;
+
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: job.url,
+            onload: res => {
+                activeRequests--;
+                processedMobs++;
+
+                const doc = new DOMParser().parseFromString(res.responseText, "text/html");
+                const rows = [...doc.querySelectorAll(".lb-row")];
+
+                rows.forEach(row => {
+                    const link = row.querySelector(".lb-name a");
+                    const dmgText = row.querySelector(".lb-dmg")?.textContent || "0";
+                    const dmg = parseInt(dmgText.replace(/\D/g, "")) || 0;
+                    if (!link || dmg <= 0) return;
+
+                    const pname = link.textContent.trim();
+
+                    if (!players[pname]) players[pname] = { mobs: {} };
+                    players[pname].mobs[job.mobName] = (players[pname].mobs[job.mobName] || 0) + 1;
+
+                    mobs[job.mobName].instances[job.mobId].players[pname] = dmg;
+                });
+
+                setTimeout(fetchNextMob, 0);
+            },
+            onerror: () => {
+                activeRequests--;
+                processedMobs++;
+                setTimeout(fetchNextMob, 0);
+            }
+        });
+    }
+
+    // ---------------- FINISH ----------------
+    function finalizeScan() {
+        saveCache();
+        insertPVELeaderboard();
+    }
+
+})();
+
+
+
 
 
