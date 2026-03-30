@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.8.1
+// @version      2.9.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -8558,30 +8558,45 @@ function applyStatusOrder() {
     observer.observe(document.body, { childList: true, subtree: true });
 })();
 
-//Cube dungeon Leaderboard
+//Cube dungeon PVE Leaderboard
+// ======================================================================
+// CUBE DUNGEON — FULL MERGED PVE + PVP + ARMY LEADERBOARD
+// Combined Leaderboard ONLY, Run-Heroes style
+// Includes: PvE, PvP, Army contributors, ETA, Progress Bar, Normalization
+// ======================================================================
+
 (function () {
     'use strict';
 
-    if (!/guild_dungeon_cube\.php$/.test(window.location.pathname)) return;
+    if (!/guild_dungeon_cube\.php/.test(window.location.pathname)) return;
+
+    // ---------------- GLOBAL STORES ----------------
+    window.players = {};       // PvE damage
+    window.mobs = {};          // PvE mob structure
+    window.pvpWins = {};       // PvP wins
+    window.armyKills = {};     // Army kills
+
+    window.pveDone = false;
+    window.pvpDone = false;
+    window.armyDone = false;
 
     const dungeonId = new URL(window.location.href).searchParams.get("id") || "default";
     const instanceId = new URL(window.location.href).searchParams.get("instance_id") || dungeonId;
 
-    // CORE DATA
-    const players = {};
-    const mobs = {};
-    const mobQueue = [];
-
-    let totalLocations = 0;
-    let processedLocations = 0;
-    let totalMobs = 0;
-    let processedMobs = 0;
-    let activeRequests = 0;
-
     const CACHE_KEY = `dungeon_scan_cache_${dungeonId}`;
     const CACHE_CONFIG_KEY = `dungeon_cache_config_${dungeonId}`;
 
-    // ---------------- CACHE ----------------
+    // ======================================================================
+    // NORMALIZATION
+    // ======================================================================
+    function normalizeName(raw) {
+        return raw.replace(/\s+/g, " ").trim();
+    }
+
+    function getAside() {
+        return document.querySelector("aside.panel.side.side-focus");
+    }
+
     function getCacheDuration() {
         const conf = JSON.parse(localStorage.getItem(CACHE_CONFIG_KEY) || "{}");
         return conf.durationHours ? conf.durationHours * 3600000 : 12 * 3600000;
@@ -8591,272 +8606,562 @@ function applyStatusOrder() {
         try {
             const data = {
                 savedAt: Date.now(),
-                players,
-                mobs
+                players: window.players,
+                mobs: window.mobs
             };
             localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-        } catch (e) {}
+        } catch { }
     }
 
     function loadCache() {
         try {
             const raw = localStorage.getItem(CACHE_KEY);
             if (!raw) return null;
-
             const data = JSON.parse(raw);
             if (!data.savedAt) return null;
-
             if (Date.now() - data.savedAt > getCacheDuration()) return null;
-
             return data;
         } catch {
             return null;
         }
     }
 
-    // ---------------- ASIDE TARGET ----------------
-    function getAside() {
-        return document.querySelector("aside.panel.side.side-focus");
+    // ======================================================================
+    // PROGRESS BAR + ETA SYSTEM
+    // ======================================================================
+
+    window.__pendingPvE = 0;
+    window.__pendingPvPRuns = 0;
+    window.__pendingArmyRequests = 0;
+    window.__totalWorkUnits = 0;
+    window.__completedWorkUnits = 0;
+
+    let avgRequestTime = 0;
+    let totalMeasuredRequests = 0;
+
+    function recordRequestTime(ms) {
+        totalMeasuredRequests++;
+        avgRequestTime = ((avgRequestTime * (totalMeasuredRequests - 1)) + ms) / totalMeasuredRequests;
     }
 
-    // ---------------- LOADING BOX ----------------
-    function insertLoadingPVEBox() {
+    function updateProgress() {
+        const bar = document.getElementById("pve_progress_bar");
+        const etaBox = document.getElementById("pve_loading_eta");
+        if (!bar || !etaBox) return;
+
+        const pct = window.__completedWorkUnits / window.__totalWorkUnits;
+        bar.style.width = `${Math.min(100, pct * 100)}%`;
+
+        const remainingUnits = window.__totalWorkUnits - window.__completedWorkUnits;
+        const etaMs = remainingUnits * avgRequestTime;
+
+        etaBox.textContent =
+            `~ ${etaMs < 1000 ? Math.round(etaMs) + 'ms' : (etaMs / 1000).toFixed(1) + 's'} remaining`;
+    }
+
+    // ======================================================================
+    // FINAL LEADERBOARD RENDERER
+    // ======================================================================
+    function buildMergedLeaderboard() {
+        if (!window.pveDone || !window.pvpDone || !window.armyDone) return;
+
         const aside = getAside();
         if (!aside) return;
 
-        const firstBox = aside.querySelector(".box");
+        const oldLoading = document.getElementById("pve_loading_box");
+        if (oldLoading) oldLoading.remove();
 
-        const loadingBox = document.createElement("div");
-        loadingBox.className = "box";
-        loadingBox.id = "pve_loading_box";
+        const oldBox = document.getElementById("merged_final_box");
+        if (oldBox) oldBox.remove();
 
-        loadingBox.innerHTML = `
-            <div class="k">PvE Leaderboard</div>
-            <p style="padding:10px;color:#ccc;">⏳ Loading PvE Leaderboard…</p>
-        `;
+        // ---------------- MERGE EVERYTHING ----------------
+        const merged = {};
 
-        if (firstBox) firstBox.insertAdjacentElement("afterend", loadingBox);
-        else aside.appendChild(loadingBox);
-    }
-
-    // ---------------- FORCE RESCAN BUTTON (INSIDE BOX, RIGHT SIDE) ----------------
-    function createForceRescanButton() {
-        return `
-            <button id="pve_force_rescan_btn"
-                style="
-                    float: right;
-                    padding: 5px 8px;
-                    border-radius: 6px;
-                    background: #ff6b6b;
-                    color: #000;
-                    font-weight: 700;
-                    border: none;
-                    cursor: pointer;
-                    margin-top: -2px;
-                ">
-                Rescan
-            </button>
-        `;
-    }
-
-    // ---------------- FINAL LEADERBOARD ----------------
-    function insertPVELeaderboard() {
-        const totals = [];
-
-        // Aggregate total damage
-        for (const [playerName, pdata] of Object.entries(players)) {
-            let sum = 0;
-
-            for (const [mobName] of Object.entries(pdata.mobs)) {
-                const mobInstances = mobs[mobName]?.instances || {};
-                for (const inst of Object.values(mobInstances)) {
-                    if (inst.players[playerName]) {
-                        sum += inst.players[playerName];
-                    }
+        // PvE damage
+        for (const [pname, pdata] of Object.entries(window.players)) {
+            let total = 0;
+            for (const mobName of Object.keys(pdata.mobs)) {
+                const insts = window.mobs[mobName]?.instances || {};
+                for (const inst of Object.values(insts)) {
+                    if (inst.players[pname]) total += inst.players[pname];
                 }
             }
 
-            totals.push({ playerName, damage: sum });
+            const norm = normalizeName(pname);
+
+            merged[norm] = {
+                name: norm,
+                pveDamage: total,
+                armyKills: window.armyKills[norm] || 0,
+                pvpWins: 0
+            };
         }
 
-        totals.sort((a, b) => b.damage - a.damage);
+        // PvP wins
+        for (const [pname, wins] of Object.entries(window.pvpWins)) {
+            const norm = normalizeName(pname);
+            if (!merged[norm]) {
+                merged[norm] = {
+                    name: norm,
+                    pveDamage: 0,
+                    armyKills: window.armyKills[norm] || 0,
+                    pvpWins: wins
+                };
+            } else {
+                merged[norm].pvpWins = wins;
+            }
+        }
 
-        const aside = getAside();
-        if (!aside) return;
+        // Army-only participants
+        for (const [pname, kills] of Object.entries(window.armyKills)) {
+            const norm = normalizeName(pname);
+            if (!merged[norm]) {
+                merged[norm] = {
+                    name: norm,
+                    pveDamage: 0,
+                    armyKills: kills,
+                    pvpWins: 0
+                };
+            } else {
+                merged[norm].armyKills = kills;
+            }
+        }
 
-        // Remove loading
-        const loadingBox = document.getElementById("pve_loading_box");
-        if (loadingBox) loadingBox.remove();
+        // Sort by PvE damage
+        const sorted = Object.values(merged)
+            .sort((a, b) => b.pveDamage - a.pveDamage);
 
-        // Build leaderboard box
+        // Build UI
         const box = document.createElement("div");
         box.className = "box";
-        box.id = "pve_final_box";
+        box.id = "merged_final_box";
 
         box.innerHTML = `
             <div class="k">
-                PvE Leaderboard
-                ${createForceRescanButton()}
+                Combined Leaderboard
+                <button id="force_rescan"
+                    style="
+                        float:right;
+                        padding:4px 7px;
+                        border-radius:6px;
+                        background:#ff6b6b;
+                        color:#000;
+                        font-weight:700;
+                        border:none;
+                        cursor:pointer;
+                    ">
+                    Rescan
+                </button>
             </div>
-            <div style="clear: both;"></div>
 
-            <div class="list" id="pveLeadersBox"></div>
+            <div class="list" id="combinedList"
+                style="width:100%; display:flex; flex-direction:column; gap:10px; padding:6px 0;">
+            </div>
         `;
 
-        const listDiv = box.querySelector("#pveLeadersBox");
+        const listDiv = box.querySelector("#combinedList");
 
-        totals.forEach((entry, index) => {
-            const hero = document.createElement("div");
-            hero.className = "hero";
-            hero.innerHTML = `
-                <div>
-                    <strong>#${index + 1} — ${entry.playerName}</strong>
-                    <small>${entry.damage.toLocaleString()} total PvE damage</small>
-                </div>
-            `;
-            listDiv.appendChild(hero);
+        sorted.forEach((p, idx) => {
+const card = document.createElement("div");
+card.style.cssText = `
+    width: 100%;
+    background: rgba(255,255,255,0.06);
+    padding: 10px 12px;
+    border-radius: 10px;
+    display: block;
+    box-sizing: border-box;
+`;
+
+const text = document.createElement("div");
+text.innerHTML = `
+    <strong>#${idx + 1} — ${p.name}</strong><br>
+    <small>${p.pveDamage.toLocaleString()} damage /
+           ${p.armyKills} army kills /
+           ${p.pvpWins} PvP wins</small>
+`;
+
+card.appendChild(text);
+listDiv.appendChild(card);
         });
 
-        const firstBox = aside.querySelector(".box");
-        if (firstBox) firstBox.insertAdjacentElement("afterend", box);
-        else aside.appendChild(box);
+        // Insert as SECOND .box
+        const boxes = aside.querySelectorAll(".box");
+        if (boxes.length > 0) {
+            boxes[0].insertAdjacentElement("afterend", box);
+        } else {
+            aside.appendChild(box);
+        }
 
-        // Attach handler
-        document.getElementById("pve_force_rescan_btn").onclick = () => forceRescan();
+        document.getElementById("force_rescan").onclick = () => {
+            localStorage.removeItem(CACHE_KEY);
+            location.reload();
+        };
     }
 
-    // ---------------- FORCE RESCAN ----------------
-    function forceRescan() {
-        localStorage.removeItem(CACHE_KEY);
-
-        for (const k in players) delete players[k];
-        for (const k in mobs) delete mobs[k];
-        mobQueue.length = 0;
-
-        totalLocations = 0;
-        processedLocations = 0;
-        totalMobs = 0;
-        processedMobs = 0;
-        activeRequests = 0;
-
-        const oldLoading = document.getElementById("pve_loading_box");
-        const oldFinal = document.getElementById("pve_final_box");
-        if (oldLoading) oldLoading.remove();
-        if (oldFinal) oldFinal.remove();
-
-        insertLoadingPVEBox();
-        location.reload();
-    }
-
-    // ---------------- CACHE LOAD ----------------
-    const cached = loadCache();
-    if (cached) {
-        Object.assign(players, cached.players);
-        Object.assign(mobs, cached.mobs);
-
-        insertLoadingPVEBox();
-        insertPVELeaderboard();
-        return;
-    }
-
-    // ---------------- FIRST RUN ----------------
-    insertLoadingPVEBox();
-
-    const locationIds = [11, 12, 13, 14];
-    const base = "/guild_dungeon_location.php?instance_id=" + instanceId + "&location_id=";
-
-    const urls = locationIds.map(id => base + id);
-    totalLocations = urls.length;
-
-    urls.forEach(url => {
-        GM_xmlhttpRequest({
-            method: "GET",
-            url,
-            onload: res => {
-                processedLocations++;
-
-                const doc = new DOMParser().parseFromString(res.responseText, "text/html");
-                const monDivs = [...doc.querySelectorAll(".mon")];
-
-                monDivs.forEach(mon => {
-                    let name = mon.querySelector("div[style*='font-weight']")?.textContent.trim() ?? "Unknown Mob";
-                    name = name.replace(/\(.*?\)/, "").trim();
-
-                    const battleLink = mon.querySelector('a.btn[href*="battle.php"]');
-                    if (!battleLink) return;
-
-                    const mobId = battleLink.href.match(/dgmid=(\d+)/)?.[1] ||
-                        Math.random().toString(36).slice(2);
-
-                    mobQueue.push({ url: battleLink.href, mobName: name, mobId });
-
-                    if (!mobs[name]) mobs[name] = { instances: {} };
-                    mobs[name].instances[mobId] = { url: battleLink.href, players: {} };
-                });
-
-                totalMobs = mobQueue.length;
-                if (processedLocations >= totalLocations) startMobCrawl();
-            }
-        });
-    });
-
-    // ---------------- MOBS CRAWLER ----------------
-    function startMobCrawl() {
-        for (let i = 0; i < 4; i++) fetchNextMob();
-    }
-
-    function fetchNextMob() {
-        if (mobQueue.length === 0) {
-            if (activeRequests === 0) finalizeScan();
+    // ======================================================================
+    // PVE CRAWLER
+    // ======================================================================
+    function startPVE() {
+        const cached = loadCache();
+        if (cached) {
+            window.players = cached.players;
+            window.mobs = cached.mobs;
+            window.pveDone = true;
+            buildMergedLeaderboard();
             return;
         }
 
-        const job = mobQueue.shift();
-        activeRequests++;
+        // Display loading box
+        const aside = getAside();
+        const loading = document.createElement("div");
+        loading.className = "box";
+        loading.id = "pve_loading_box";
+        loading.innerHTML = `
+            <div class="k">Combined Leaderboard</div>
+            <p style="padding:10px;color:#ccc;">
+                ⏳ Scanning… <span id="pve_loading_eta"></span>
+                <div id="pve_progress_container"
+                    style="
+                        margin-top:8px;
+                        width:100%;
+                        height:8px;
+                        background:#1e1e1e;
+                        border-radius:4px;
+                        overflow:hidden;
+                    ">
+                    <div id="pve_progress_bar"
+                        style="
+                            width:0%;
+                            height:100%;
+                            background:#ff6b6b;
+                            transition:width 0.2s ease-out;
+                        ">
+                    </div>
+                </div>
+            </p>
+        `;
+        aside.insertAdjacentElement("afterbegin", loading);
 
-        GM_xmlhttpRequest({
-            method: "GET",
-            url: job.url,
-            onload: res => {
-                activeRequests--;
-                processedMobs++;
+        const players = window.players;
+        const mobs = window.mobs;
 
-                const doc = new DOMParser().parseFromString(res.responseText, "text/html");
-                const rows = [...doc.querySelectorAll(".lb-row")];
+        const mobQueue = [];
+        let totalLocations = 0;
+        let processedLocations = 0;
+        let activeRequests = 0;
 
-                rows.forEach(row => {
-                    const link = row.querySelector(".lb-name a");
-                    const dmgText = row.querySelector(".lb-dmg")?.textContent || "0";
-                    const dmg = parseInt(dmgText.replace(/\D/g, "")) || 0;
-                    if (!link || dmg <= 0) return;
+        const urls = [11, 12, 13, 14].map(
+            id => `/guild_dungeon_location.php?instance_id=${instanceId}&location_id=${id}`
+        );
 
-                    const pname = link.textContent.trim();
+        totalLocations = urls.length;
 
-                    if (!players[pname]) players[pname] = { mobs: {} };
-                    players[pname].mobs[job.mobName] = (players[pname].mobs[job.mobName] || 0) + 1;
+        // Set estimated workloads
+        const estimatedPvEMobs = 25;
+        const estimatedPvE = 4 + estimatedPvEMobs;
+        const estimatedPvP = 3;
+        const estimatedArmy = 3 + 4 + 4 + 1;
 
-                    mobs[job.mobName].instances[job.mobId].players[pname] = dmg;
-                });
+        window.__totalWorkUnits = estimatedPvE + estimatedPvP + estimatedArmy;
 
-                setTimeout(fetchNextMob, 0);
-            },
-            onerror: () => {
-                activeRequests--;
-                processedMobs++;
-                setTimeout(fetchNextMob, 0);
+        function crawlMob() {
+            if (mobQueue.length === 0) {
+                if (activeRequests === 0) finishPVE();
+                return;
+            }
+
+            const job = mobQueue.shift();
+            window.__pendingPvE++;
+            const t0 = performance.now();
+            activeRequests++;
+
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: job.url,
+
+                onload: res => {
+                    recordRequestTime(performance.now() - t0);
+                    window.__pendingPvE--;
+                    window.__completedWorkUnits++;
+                    updateProgress();
+
+                    activeRequests--;
+                    const doc = new DOMParser().parseFromString(res.responseText, "text/html");
+                    const rows = [...doc.querySelectorAll(".lb-row")];
+
+                    rows.forEach(r => {
+                        const link = r.querySelector(".lb-name a");
+                        const dmgEl = r.querySelector(".lb-dmg");
+                        if (!link) return;
+
+                        const dmg = parseInt((dmgEl?.textContent ?? "0").replace(/\D/g, "")) || 0;
+                        if (dmg <= 0) return;
+
+                        const pname = normalizeName(link.textContent);
+
+                        if (!players[pname]) players[pname] = { mobs: {} };
+                        players[pname].mobs[job.mobName] = 1;
+
+                        mobs[job.mobName].instances[job.mobId].players[pname] = dmg;
+                    });
+
+                    setTimeout(crawlMob, 0);
+                },
+
+                onerror: () => {
+                    window.__pendingPvE--;
+                    window.__completedWorkUnits++;
+                    updateProgress();
+
+                    activeRequests--;
+                    setTimeout(crawlMob, 0);
+                }
+            });
+        }
+
+        function finishPVE() {
+            saveCache();
+            window.pveDone = true;
+            buildMergedLeaderboard();
+        }
+
+        // Fetch dungeon location pages
+        urls.forEach(url => {
+            window.__pendingPvE++;
+            const t0 = performance.now();
+
+            GM_xmlhttpRequest({
+                method: "GET",
+                url,
+
+                onload: res => {
+                    recordRequestTime(performance.now() - t0);
+                    window.__pendingPvE--;
+                    window.__completedWorkUnits++;
+                    updateProgress();
+
+                    processedLocations++;
+
+                    const doc = new DOMParser().parseFromString(res.responseText, "text/html");
+                    const monDivs = [...doc.querySelectorAll(".mon")];
+
+                    monDivs.forEach(mon => {
+                        let name = mon.querySelector("div[style*='font-weight']")
+                            ?.textContent.trim() ?? "Unknown Mob";
+                        name = name.replace(/\(.*?\)/, "").trim();
+
+                        const link = mon.querySelector('a.btn[href*="battle.php"]');
+                        if (!link) return;
+
+                        const mobId = link.href.match(/dgmid=(\d+)/)?.[1] ||
+                            Math.random().toString(36).slice(2);
+
+                        mobQueue.push({ url: link.href, mobName: name, mobId });
+
+                        if (!mobs[name]) mobs[name] = { instances: {} };
+                        mobs[name].instances[mobId] = { url: link.href, players: {} };
+                    });
+
+                    if (processedLocations >= totalLocations) {
+                        for (let i = 0; i < 4; i++) crawlMob();
+                    }
+                },
+
+                onerror: () => {
+                    window.__pendingPvE--;
+                    window.__completedWorkUnits++;
+                    updateProgress();
+
+                    processedLocations++;
+                    if (processedLocations >= totalLocations) {
+                        for (let i = 0; i < 4; i++) crawlMob();
+                    }
+                }
+            });
+        });
+    }
+
+    // ======================================================================
+    // PVP CRAWLER
+    // ======================================================================
+    function startPVP() {
+        window.pvpWins = {};
+        let completed = 0;
+
+        [7, 8, 9].forEach(nodeId => {
+            window.__pendingPvPRuns++;
+            const t0 = performance.now();
+
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: `/pvp_style_node.php?instance_id=${instanceId}&source=cube&node_id=${nodeId}`,
+
+                onload: res => {
+                    recordRequestTime(performance.now() - t0);
+                    window.__pendingPvPRuns--;
+                    window.__completedWorkUnits++;
+                    updateProgress();
+
+                    completed++;
+
+                    const doc = new DOMParser().parseFromString(res.responseText, "text/html");
+                    const slots = doc.querySelectorAll(".slot .name");
+
+                    slots.forEach(s => {
+                        const pname = normalizeName(s.textContent);
+                        window.pvpWins[pname] = (window.pvpWins[pname] || 0) + 1;
+                    });
+
+                    if (completed >= 3) {
+                        window.pvpDone = true;
+                        buildMergedLeaderboard();
+                    }
+                },
+
+                onerror: () => {
+                    window.__pendingPvPRuns--;
+                    window.__completedWorkUnits++;
+                    updateProgress();
+
+                    completed++;
+                    if (completed >= 3) {
+                        window.pvpDone = true;
+                        buildMergedLeaderboard();
+                    }
+                }
+            });
+        });
+    }
+
+    // ======================================================================
+    // ARMY CRAWLER (contributors mode)
+    // ======================================================================
+    function startARMY() {
+        window.armyKills = {};
+        const nodes = [5, 6, 11];
+        let completedNodes = 0;
+
+        nodes.forEach(nodeId => {
+
+            // STEP 1: state → get match count
+            window.__pendingArmyRequests++;
+            const t0state = performance.now();
+
+            GM_xmlhttpRequest({
+                method: "POST",
+                url: `/guild_dungeon_cube_army_action.php`,
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                    "Origin": "https://demonicscans.org",
+                    "Referer": `https://demonicscans.org/guild_dungeon_cube_army_enter.php?instance_id=${instanceId}&node_id=${nodeId}`
+                },
+                data: `action=state&instance_id=${instanceId}&node_id=${nodeId}`,
+
+                onload: res => {
+                    recordRequestTime(performance.now() - t0state);
+                    window.__pendingArmyRequests--;
+                    window.__completedWorkUnits++;
+                    updateProgress();
+
+                    let json;
+                    try {
+                        json = JSON.parse(res.responseText);
+                    } catch (e) {
+                        console.error("Army STATE parse error:", e, res.responseText);
+                        finishNode();
+                        return;
+                    }
+
+                    const required = json.required_matches || 0;
+                    if (required === 0) {
+                        finishNode();
+                        return;
+                    }
+
+                    let completedMatches = 0;
+
+                    // STEP 2: contributors
+                    for (let m = 1; m <= required; m++) {
+                        window.__pendingArmyRequests++;
+                        const t0m = performance.now();
+
+                        GM_xmlhttpRequest({
+                            method: "POST",
+                            url: `/guild_dungeon_cube_army_action.php`,
+                            headers: {
+                                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                                "Origin": "https://demonicscans.org",
+                                "Referer": `https://demonicscans.org/guild_dungeon_cube_army_enter.php?instance_id=${instanceId}&node_id=${nodeId}`
+                            },
+                            data: `action=contributors&instance_id=${instanceId}&node_id=${nodeId}&match_no=${m}`,
+
+                            onload: r2 => {
+                                recordRequestTime(performance.now() - t0m);
+                                window.__pendingArmyRequests--;
+                                window.__completedWorkUnits++;
+                                updateProgress();
+
+                                completedMatches++;
+
+                                let json2;
+                                try {
+                                    json2 = JSON.parse(r2.responseText);
+                                } catch (err) {
+                                    console.error("Army CONTRIBUTORS parse", err, r2.responseText);
+                                    if (completedMatches >= required) finishNode();
+                                    return;
+                                }
+
+                                const attackers = json2?.board?.attackers || [];
+                                attackers.forEach(a => {
+                                    const pname = normalizeName(a.username);
+                                    const kills = a.enemy_units_killed || 0;
+                                    window.armyKills[pname] =
+                                        (window.armyKills[pname] || 0) + kills;
+                                });
+
+                                if (completedMatches >= required) finishNode();
+                            },
+
+                            onerror: () => {
+                                window.__pendingArmyRequests--;
+                                window.__completedWorkUnits++;
+                                updateProgress();
+
+                                completedMatches++;
+                                if (completedMatches >= required) finishNode();
+                            }
+                        });
+                    }
+                },
+
+                onerror: () => {
+                    window.__pendingArmyRequests--;
+                    window.__completedWorkUnits++;
+                    updateProgress();
+
+                    finishNode();
+                }
+            });
+
+            function finishNode() {
+                completedNodes++;
+                if (completedNodes >= nodes.length) {
+                    window.armyDone = true;
+                    buildMergedLeaderboard();
+                }
             }
         });
     }
 
-    // ---------------- FINISH ----------------
-    function finalizeScan() {
-        saveCache();
-        insertPVELeaderboard();
-    }
+    // ======================================================================
+    // START EVERYTHING
+    // ======================================================================
+    startPVE();
+    startPVP();
+    startARMY();
 
 })();
-
-
 
 
 
