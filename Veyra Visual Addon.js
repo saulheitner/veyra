@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.10.1
+// @version      2.11.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -9250,7 +9250,7 @@ listDiv.appendChild(card);
                 <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=13">Crown Lens</a>
                 <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=14">Crown of Calibration</a>
 
-                <strong>PvP</strong>
+                <strong>PvPE</strong>
                 <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=7">Duel Heart Trial</a>
                 <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=8">Ring Ward Trial</a>
                 <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=9">Tyrant Conclave</a>
@@ -9388,3 +9388,145 @@ listDiv.appendChild(card);
 
 })();
 
+//Army damage dealt
+(function() {
+    'use strict';
+
+    const url = "https://demonicscans.org/guild_dungeon_cube_army_action.php";
+
+    const nodes = [5, 6, 11];
+    const matches = [1, 2, 3, 4];
+
+    // Detect your userId from cookie "demon"
+    function getMyUserId() {
+        let m = document.cookie.match(/(?:^|;\s*)demon=(\d+)/);
+        return m ? parseInt(m[1], 10) : null;
+    }
+
+    // Extract instance_id from link
+    function getInstanceId() {
+        const btn = document.querySelector('a.btn[href*="instance_id"]');
+        if (!btn) return null;
+
+        const urlObj = new URL(btn.href, window.location.origin);
+        return urlObj.searchParams.get("instance_id");
+    }
+
+    // Wait for page element
+    function waitForElement(selector, cb) {
+        const el = document.querySelector(selector);
+        if (el) cb(el);
+        else setTimeout(() => waitForElement(selector, cb), 200);
+    }
+
+    // UI damage box
+    function injectUI() {
+        const pill = document.querySelector(".top-actions .status-pill");
+        if (!pill) return;
+        if (document.getElementById("myDamageTracker")) return;
+
+        const box = document.createElement("div");
+        box.id = "myDamageTracker";
+        box.style.marginLeft = "10px";
+        box.style.padding = "4px 10px";
+        box.style.background = "#222";
+        box.style.color = "#0f0";
+        box.style.borderRadius = "6px";
+        box.style.fontSize = "14px";
+        box.style.fontWeight = "bold";
+
+        box.innerText = "Total dmg dealt: ...";
+
+        pill.parentNode.appendChild(box);
+    }
+
+    // Fetch for a single node+match
+    async function scan(nodeId, matchNo, instanceId, myUserId) {
+        try {
+            const payload = new URLSearchParams({
+                action: "contributors",
+                instance_id: instanceId,
+                node_id: String(nodeId),
+                match_no: String(matchNo)
+            });
+
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+                },
+                body: payload
+            });
+
+            const data = await response.json();
+            if (!data.ok) return 0;
+
+            const me = data.board.attackers.find(a => a.user_id === myUserId);
+            return me ? me.damage_dealt : 0;
+
+        } catch (err) {
+            console.error(`Error node ${nodeId} match ${matchNo}:`, err);
+            return 0;
+        }
+    }
+
+    // Main loop
+    async function startScanner() {
+        const instanceId = getInstanceId();
+        const myUserId = getMyUserId();
+
+        if (!instanceId) {
+            console.warn("instance_id not found.");
+            return;
+        }
+
+        if (!myUserId) {
+            console.warn("Could not get userId from cookie 'demon'.");
+            return;
+        }
+
+        waitForElement(".status-pill", injectUI);
+
+        console.log("Scanner started. Instance:", instanceId, "User:", myUserId);
+
+        setInterval(async () => {
+
+            let totalDamage = 0;
+
+            // Loop nodes
+            for (const node of nodes) {
+
+                let nodeDamage = 0;
+
+                // Loop all 4 matches
+                for (const match of matches) {
+                    const dmg = await scan(node, match, instanceId, myUserId);
+                    nodeDamage += dmg;
+                }
+
+                totalDamage += nodeDamage;
+
+                console.log(
+                    `%cNode ${node} Total = ${nodeDamage.toLocaleString()}`,
+                    "color: cyan; font-weight: bold;"
+                );
+            }
+
+            // Update UI box
+            const box = document.getElementById("myDamageTracker");
+            if (box) {
+                box.innerText = `Total dmg dealt: ${totalDamage.toLocaleString()}`;
+
+                if (totalDamage > 990000) {
+                    box.style.color = "#ff3b3b";   // red alert
+                } else {
+                    box.style.color = "#0f0";      // green normal
+                }
+            }
+
+        }, 1000);
+    }
+
+    waitForElement('a.btn[href*="instance_id"]', startScanner);
+
+})();
