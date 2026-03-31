@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.9.1
+// @version      2.10.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -8558,13 +8558,7 @@ function applyStatusOrder() {
     observer.observe(document.body, { childList: true, subtree: true });
 })();
 
-//Cube dungeon PVE Leaderboard
-// ======================================================================
-// CUBE DUNGEON — FULL MERGED PVE + PVP + ARMY LEADERBOARD
-// Combined Leaderboard ONLY, Run-Heroes style
-// Includes: PvE, PvP, Army contributors, ETA, Progress Bar, Normalization
-// ======================================================================
-
+//Cube dungeon Leaderboard
 (function () {
     'use strict';
 
@@ -8652,11 +8646,19 @@ function applyStatusOrder() {
         const pct = window.__completedWorkUnits / window.__totalWorkUnits;
         bar.style.width = `${Math.min(100, pct * 100)}%`;
 
-        const remainingUnits = window.__totalWorkUnits - window.__completedWorkUnits;
+
+        let remainingUnits = window.__totalWorkUnits - window.__completedWorkUnits;
+        if (remainingUnits < 0) remainingUnits = 0;  // clamp
+
         const etaMs = remainingUnits * avgRequestTime;
 
-        etaBox.textContent =
-            `~ ${etaMs < 1000 ? Math.round(etaMs) + 'ms' : (etaMs / 1000).toFixed(1) + 's'} remaining`;
+
+       if (remainingUnits === 0) {
+    etaBox.textContent = `done`;
+} else {
+    etaBox.textContent =
+        `~ ${etaMs < 1000 ? Math.round(etaMs) + 'ms' : (etaMs / 1000).toFixed(1) + 's'} remaining`;
+}
     }
 
     // ======================================================================
@@ -9163,5 +9165,152 @@ listDiv.appendChild(card);
 
 })();
 
+//cube dungeon drop down site map
+
+(function() {
+    'use strict';
+
+    const url = new URL(window.location.href);
+    const instance_id = url.searchParams.get("instance_id");
+    if (!instance_id) return;
+
+    function getPlaceholder() {
+
+        // PvE
+        if (location.pathname.includes("guild_dungeon_location.php")) {
+            return document.querySelector(".wrap .row .h");
+        }
+
+        // PvP & Army
+        if (location.pathname.includes("pvp_style_node.php") ||
+            location.pathname.includes("guild_dungeon_cube_army_enter.php")) {
+            return document.querySelector(".wrap .topbar .left .title h1");
+        }
+
+        // Shop & Forge
+        if (location.pathname.includes("guild_dungeon_cube_shop.php") ||
+            location.pathname.includes("guild_dungeon_cube_forge.php")) {
+            return document.querySelector(".wrap .panel .row h1");
+        }
+
+        return null;
+    }
+
+    function buildHTML(originalText) {
+        return `
+        <div class="siteMapDropdown">
+            <button class="dropdownToggle">${originalText} ▼</button>
+            <div class="dropdownMenu">
+
+
+<strong>PvE</strong>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=11">Gate Prism</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=12">Ash Lane</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=13">Crown Lens</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=14">Crown of Calibration</a>
+
+                <strong>PvP</strong>
+                <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=7">Duel Heart Trial</a>
+                <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=8">Ring Ward Trial</a>
+                <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=9">Tyrant Conclave</a>
+
+                <strong>Army</strong>
+                <a href="/guild_dungeon_cube_army_enter.php?instance_id=${instance_id}&node_id=5">Moonfang Ambush</a>
+                <a href="/guild_dungeon_cube_army_enter.php?instance_id=${instance_id}&node_id=6">Thornhost Phalanx</a>
+                <a href="/guild_dungeon_cube_army_enter.php?instance_id=${instance_id}&node_id=11">Abyssal Muster</a>
+
+                <strong>Forge</strong>
+                <a href="/guild_dungeon_cube_forge.php?instance_id=${instance_id}&node_id=13">Quiet Anvil</a>
+
+                <strong>Shop</strong>
+                <a href="/guild_dungeon_cube_shop.php?instance_id=${instance_id}&node_id=4">Relay Kiln Exchange</a>
+
+            </div>
+        </div>
+
+        `;
+    }
+
+    function injectStyles() {
+        const css = `
+        .siteMapDropdown {
+            position: relative;
+            display: inline-block;
+        }
+
+        .dropdownToggle {
+            background: none;
+            border: none;
+            font-size: 26px;
+            font-weight: bold;
+            cursor: pointer;
+            color: white;
+            padding: 0;
+            margin-top: 15px;
+        }
+        .dropdownMenu {
+            display: none;
+            position: absolute;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            padding: 10px 14px;
+            min-width: 260px;
+            z-index: 999;
+            border-radius: 4px;
+        }
+        .dropdownMenu a {
+            display: block;
+            color: #ccc;
+            padding: 4px 0;
+            text-decoration: none;
+        }
+        .dropdownMenu strong {
+            display: block;
+            margin-top: 10px;
+            color: #fff;
+        }
+        .dropdownMenu a:hover {
+            color: white;
+        }
+        `;
+        const style = document.createElement("style");
+        style.textContent = css;
+        document.head.appendChild(style);
+    }
+
+    function attachEvents() {
+        const toggle = document.querySelector(".dropdownToggle");
+        const menu = document.querySelector(".dropdownMenu");
+        const wrap = document.querySelector(".siteMapDropdown");
+
+        toggle.addEventListener("click", () => {
+            menu.style.display = menu.style.display === "block" ? "none" : "block";
+        });
+
+        document.addEventListener("click", (e) => {
+            if (!wrap.contains(e.target)) {
+                menu.style.display = "none";
+            }
+        });
+    }
+
+    function init() {
+        const placeholder = getPlaceholder();
+        if (!placeholder) return requestAnimationFrame(init);
+
+        const originalText = placeholder.textContent.trim();
+
+        const wrapper = document.createElement("div");
+        wrapper.innerHTML = buildHTML(originalText);
+
+        placeholder.replaceWith(wrapper);
+
+        injectStyles();
+        attachEvents();
+    }
+
+    init();
+
+})();
 
 
