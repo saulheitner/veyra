@@ -9165,29 +9165,66 @@ listDiv.appendChild(card);
 
 })();
 
-//cube dungeon drop down site map
-
-(function() {
+//Dungeons dropdown site map
+(function () {
     'use strict';
 
     const url = new URL(window.location.href);
     const instance_id = url.searchParams.get("instance_id");
     if (!instance_id) return;
 
+    const locID = Number(url.searchParams.get("location_id"));
+
+    /* -----------------------------------------
+       CATEGORY DETECTION
+    ----------------------------------------- */
+
+    const CategoryC_Normal = [1, 2, 3, 4, 5];
+    const CategoryB_Hard   = [6, 7, 8, 9, 10];
+    const CategoryA_PvE    = [11, 12, 13, 14];
+
+    function isCategoryA() {
+        return (
+            // PvE (IDs 11–14)
+            (location.pathname.includes("guild_dungeon_location.php") && CategoryA_PvE.includes(locID)) ||
+
+            // PvP & Army
+            location.pathname.includes("pvp_style_node.php") ||
+            location.pathname.includes("guild_dungeon_cube_army_enter.php") ||
+
+            // Shop & Forge
+            location.pathname.includes("guild_dungeon_cube_shop.php") ||
+            location.pathname.includes("guild_dungeon_cube_forge.php")
+        );
+    }
+
+    function isCategoryB() {
+        return location.pathname.includes("guild_dungeon_location.php") &&
+               CategoryB_Hard.includes(locID);
+    }
+
+    function isCategoryC() {
+        return location.pathname.includes("guild_dungeon_location.php") &&
+               CategoryC_Normal.includes(locID);
+    }
+
+    /* -----------------------------------------
+       PLACEHOLDER LOGIC
+    ----------------------------------------- */
     function getPlaceholder() {
 
-        // PvE
+        // --- Categories C and B and PvE (Category A part) share same placeholder ---
         if (location.pathname.includes("guild_dungeon_location.php")) {
             return document.querySelector(".wrap .row .h");
         }
 
-        // PvP & Army
+        // --- PvP & Army ---
         if (location.pathname.includes("pvp_style_node.php") ||
             location.pathname.includes("guild_dungeon_cube_army_enter.php")) {
             return document.querySelector(".wrap .topbar .left .title h1");
         }
 
-        // Shop & Forge
+        // --- Shop & Forge ---
         if (location.pathname.includes("guild_dungeon_cube_shop.php") ||
             location.pathname.includes("guild_dungeon_cube_forge.php")) {
             return document.querySelector(".wrap .panel .row h1");
@@ -9196,14 +9233,18 @@ listDiv.appendChild(card);
         return null;
     }
 
-    function buildHTML(originalText) {
+    /* -----------------------------------------
+       MENU BUILDERS
+    ----------------------------------------- */
+
+    // CATEGORY A
+    function buildMenuA(originalText) {
         return `
         <div class="siteMapDropdown">
             <button class="dropdownToggle">${originalText} ▼</button>
             <div class="dropdownMenu">
 
-
-<strong>PvE</strong>
+                <strong>PvE</strong>
                 <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=11">Gate Prism</a>
                 <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=12">Ash Lane</a>
                 <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=13">Crown Lens</a>
@@ -9227,26 +9268,58 @@ listDiv.appendChild(card);
 
             </div>
         </div>
-
         `;
     }
 
+    // CATEGORY B (HARD MODE)
+    function buildMenuB(originalText) {
+        return `
+        <div class="siteMapDropdown">
+            <button class="dropdownToggle">${originalText} ▼</button>
+            <div class="dropdownMenu">
+
+                <strong>Hard Mode</strong>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=6">The Vizier's Conspiracy Hall</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=7">Hall of the Bloodbound</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=8">Room of Beasts</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=9">Room of the Dead Crown</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=10">The True Heir Throne Boss</a>
+
+            </div>
+        </div>
+        `;
+    }
+
+    // CATEGORY C (NORMAL MODE 1–5)
+    function buildMenuC(originalText) {
+        return `
+        <div class="siteMapDropdown">
+            <button class="dropdownToggle">${originalText} ▼</button>
+            <div class="dropdownMenu">
+
+                <strong>Normal Mode</strong>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=1">Brood Pits</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=2">Plunder Warrens</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=3">Shattered Stone Causeways</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=4">Territory Center</a>
+                <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=5">Boss Room</a>
+
+            </div>
+        </div>
+        `;
+    }
+
+    /* -----------------------------------------
+       STYLES
+    ----------------------------------------- */
     function injectStyles() {
         const css = `
-        .siteMapDropdown {
-            position: relative;
-            display: inline-block;
-        }
-
+        .siteMapDropdown { position: relative; display: inline-block; }
         .dropdownToggle {
-            background: none;
-            border: none;
-            font-size: 26px;
-            font-weight: bold;
-            cursor: pointer;
-            color: white;
-            padding: 0;
-            margin-top: 15px;
+            background: none; border: none;
+            font-size: 26px; font-weight: bold;
+            cursor: pointer; color: white;
+            padding: 0; margin-top: 15px;
         }
         .dropdownMenu {
             display: none;
@@ -9264,27 +9337,24 @@ listDiv.appendChild(card);
             padding: 4px 0;
             text-decoration: none;
         }
-        .dropdownMenu strong {
-            display: block;
-            margin-top: 10px;
-            color: #fff;
-        }
-        .dropdownMenu a:hover {
-            color: white;
-        }
+        .dropdownMenu strong { display: block; margin-top: 10px; color: #fff; }
+        .dropdownMenu a:hover { color: white; }
         `;
         const style = document.createElement("style");
         style.textContent = css;
         document.head.appendChild(style);
     }
 
+    /* -----------------------------------------
+       EVENTS
+    ----------------------------------------- */
     function attachEvents() {
         const toggle = document.querySelector(".dropdownToggle");
         const menu = document.querySelector(".dropdownMenu");
         const wrap = document.querySelector(".siteMapDropdown");
 
         toggle.addEventListener("click", () => {
-            menu.style.display = menu.style.display === "block" ? "none" : "block";
+            menu.style.display = (menu.style.display === "block" ? "none" : "block");
         });
 
         document.addEventListener("click", (e) => {
@@ -9294,17 +9364,22 @@ listDiv.appendChild(card);
         });
     }
 
+    /* -----------------------------------------
+       INIT
+    ----------------------------------------- */
     function init() {
         const placeholder = getPlaceholder();
         if (!placeholder) return requestAnimationFrame(init);
 
         const originalText = placeholder.textContent.trim();
-
         const wrapper = document.createElement("div");
-        wrapper.innerHTML = buildHTML(originalText);
+
+        if (isCategoryB())       wrapper.innerHTML = buildMenuB(originalText);
+        else if (isCategoryC())  wrapper.innerHTML = buildMenuC(originalText);
+        else if (isCategoryA())  wrapper.innerHTML = buildMenuA(originalText);
+        else return;
 
         placeholder.replaceWith(wrapper);
-
         injectStyles();
         attachEvents();
     }
@@ -9312,5 +9387,4 @@ listDiv.appendChild(card);
     init();
 
 })();
-
 
