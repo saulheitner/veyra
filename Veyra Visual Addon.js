@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.11.1
+// @version      2.12.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -349,7 +349,6 @@ function isExceptionPage() {
     }
 })();
 
-
 window.addEventListener('load', () => {
 
     ['.side-drawer', '#battleDrawer', '#qsDrawer'].forEach(selector => {
@@ -680,7 +679,6 @@ function initOrderPanel() {
     document.body.appendChild(navOrder);
 }
 initOrderPanel();
-
 
 function modifySideNav() {
     (function() {
@@ -1357,7 +1355,6 @@ function modifySideNav() {
     initAdventurersGuildQuests();
     initStatAllocationButtons();
 }
-
 
 function modBlacksmith() {
     if (window.location.href.includes('blacksmith.php')) {
@@ -3754,13 +3751,10 @@ function isExcludedFromLootPlan(card) {
 
 // end monster card section
 
-
 if (vv.isOn('quest_modal')) {
     injectQuestModalStyles();
     ensureQuestModal();
 }
-
-
 
 // Guild sidebar section
 async function fetchDungeonLink(titleText, dashUrl = 'guild_dash.php') {
@@ -4153,7 +4147,6 @@ function initAdventurersGuildQuests() {
                 </div>`;
         });
 }
-
 
 // -------------------------------------------
 // LIVE SIDEBAR COOLDOWN TIMER ENGINE
@@ -4785,7 +4778,6 @@ const POTIONS = [{
     hasTimer: false
 }];
 
-
 async function initAddPotions() {
     const container = document.getElementById('battleDrawer');
 
@@ -5043,7 +5035,6 @@ observer.observe(document.body, {
     subtree: true
 });
 
-
 //sidebar customization
 const ORDER_KEY = 'sideNavOrder:v2';
 const LEGACY_KEY = 'sideNavOrder:v1'; // old array-only key (if you used earlier version)
@@ -5074,7 +5065,6 @@ function getNav() {
     return document.querySelector('.side-nav');
 }
 
-
 function getCurrentAnchors() {
     const nav = getNav();
     if (!nav) return [];
@@ -5086,7 +5076,6 @@ function getCurrentAnchors() {
 function getCurrentHrefs() {
     return getCurrentAnchors().map(a => a.getAttribute('href'));
 }
-
 
 // Merge saved/default order with what actually exists now
 function mergeOrder(order, currentHrefs) {
@@ -5328,9 +5317,6 @@ function initNavOrderUI({
     });
 }
 //initNavOrderUI();
-
-
-
 
 //top hp/mp bar
 (function() {
@@ -7662,7 +7648,6 @@ function escapeHtml(str) {
     });
 })();
 
-
 //collpe button for the dude's panels
 (function() {
     if (!vv.isOn('autohunt_collapse')) return;
@@ -9529,4 +9514,448 @@ listDiv.appendChild(card);
 
     waitForElement('a.btn[href*="instance_id"]', startScanner);
 
+})();
+
+//PVP HP Bar
+(function () {
+    'use strict';
+
+    // Wait until hpText is present in DOM
+    const waitForDOM = setInterval(() => {
+        if (document.querySelector(".hpText")) {
+            clearInterval(waitForDOM);
+            initHPBar();
+        }
+    }, 300);
+
+
+    function initHPBar() {
+
+        // --- Floating Bar UI ---
+        const bar = document.createElement("div");
+        bar.id = "floatingHPBar";
+        bar.innerHTML = `
+            <div class="hp-side left">
+                <span class="label">YOU</span>
+                <div class="hpBar"><div class="hpFill" id="allyFill"></div></div>
+                <span class="hpText" id="allyText"></span>
+            </div>
+
+            <div class="hp-side right">
+                <span class="label">ENEMY</span>
+                <div class="hpBar enemy"><div class="hpFill enemyFill" id="enemyFill"></div></div>
+                <span class="hpText" id="enemyText"></span>
+            </div>
+        `;
+
+        document.body.appendChild(bar);
+
+        // CSS stays exactly like your first version
+const style = document.createElement("style");
+        style.textContent = `
+            #floatingHPBar {
+                position: fixed;
+                top: 78px;
+                left: 50%;
+                transform: translateX(-50%);
+                display: flex;
+                gap: 32px;                  /* slightly smaller gap */
+                z-index: 99999;
+                background: rgba(0,0,0,.45);
+                border: 1px solid rgba(255,255,255,.15);
+                padding: 4px 14px;          /* reduced height */
+                border-radius: 10px;        /* slightly smaller corners */
+                backdrop-filter: blur(8px);
+            }
+
+            #floatingHPBar .hp-side {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                line-height: 1;             /* tight vertical spacing */
+            }
+
+            #floatingHPBar .label {
+                font-size: 11px;            /* smaller text */
+                text-transform: uppercase;
+                opacity: .8;
+                margin-bottom: 2px;         /* reduced space */
+            }
+
+            #floatingHPBar .hpBar {
+                width: 150px;
+                height: 9px;                /* thinner bar */
+                background: rgba(255,255,255,.12);
+                border-radius: 999px;
+                overflow: hidden;
+            }
+
+            #floatingHPBar .hpFill {
+                height: 100%;
+                width: 0;
+                background: linear-gradient(90deg, rgba(34,197,94,.95), rgba(0,242,255,.55));
+                transition: width .25s ease;
+            }
+
+            #floatingHPBar .enemy .hpFill {
+                background: linear-gradient(90deg, rgba(255,107,107,.95), rgba(255,209,102,.6));
+            }
+
+            #floatingHPBar .hpText {
+                font-size: 10px;            /* smaller numbers */
+                margin-top: 2px;            /* reduced spacing */
+                opacity: .9;
+            }
+        `;
+        document.head.appendChild(style);
+
+        setInterval(updateFloatingHP, 500);
+    }
+
+
+
+    // --- MAIN HP READER (DOM-based, correct parsing) ---
+    function updateFloatingHP() {
+
+        function readSide(selector) {
+            let totalHP = 0;
+            let totalMax = 0;
+
+            document.querySelectorAll(selector).forEach(node => {
+                const spans = node.querySelectorAll("span");
+                if (spans.length === 2) {
+                    const currRaw = spans[0].textContent.replace("HP", "").trim();
+                    const maxRaw  = spans[1].textContent.trim();
+
+                    const curr = Number(currRaw.replace(/,/g, ""));
+                    const max  = Number(maxRaw.replace(/,/g, ""));
+
+                    if (!isNaN(curr)) totalHP += curr;
+                    if (!isNaN(max))  totalMax += max;
+                }
+            });
+
+            return { totalHP, totalMax };
+        }
+
+        // Read ally and enemy from DOM
+        const ally  = readSide("#allyFormation  .hpText");
+        const enemy = readSide("#enemyFormation .hpText");
+
+        // Update YOU
+        if (ally.totalMax > 0) {
+            const pct = (ally.totalHP / ally.totalMax) * 100;
+            document.getElementById("allyFill").style.width = pct + "%";
+            document.getElementById("allyText").textContent =
+                ally.totalHP.toLocaleString() + " / " + ally.totalMax.toLocaleString();
+        }
+
+        // Update ENEMY
+        if (enemy.totalMax > 0) {
+            const pct = (enemy.totalHP / enemy.totalMax) * 100;
+            document.getElementById("enemyFill").style.width = pct + "%";
+            document.getElementById("enemyText").textContent =
+                enemy.totalHP.toLocaleString() + " / " + enemy.totalMax.toLocaleString();
+        }
+    }
+
+})();
+
+//mobs filter
+// ==UserScript==
+// @name         Monster Checkbox Dropdown Filter (Final, Wave-Scoped)
+// @match        *://*/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    "use strict";
+
+    /* ---------------------------------------------------------
+       ✅ Wave-scoped storage key
+       - wave is always present
+       - gate OR event may be present
+       --------------------------------------------------------- */
+    function getWaveStorageKey() {
+        try {
+            const url = new URL(window.location.href);
+
+            const page = url.pathname.replace(/^\/+/, "").replace(/\.php$/, "");
+            const wave = url.searchParams.get("wave") || "nowave";
+
+            const gate = url.searchParams.get("gate");
+            const event = url.searchParams.get("event");
+
+            let scope;
+            if (gate) {
+                scope = `gate${gate}`;
+            } else if (event) {
+                scope = `event${event}`;
+            } else {
+                scope = "default";
+            }
+
+            return `tm_monster_filter_${page}_wave${wave}_${scope}`;
+        } catch {
+            return "tm_monster_filter_fallback";
+        }
+    }
+
+    function init(attempt = 0) {
+
+        // ✅ Do nothing if Wave Addon UI is present
+        if (document.querySelector("#wave-addon-filter-panel")) {
+            console.log("[Monster Filter] Wave Addon detected — skipping custom filter.");
+            return;
+        }
+
+        const cards = document.querySelectorAll(".monster-container .monster-card");
+        const select = document.querySelector("#fNameSel");
+
+        if (!select || cards.length === 0) {
+            if (attempt < 30) return setTimeout(() => init(attempt + 1), 300);
+            return;
+        }
+
+        const STORAGE_KEY = getWaveStorageKey();
+
+        // ✅ Extract unique monster names
+        const names = [...new Set(
+            [...cards].map(card =>
+                card.querySelector("h3")?.textContent.trim().toLowerCase()
+            )
+        )].filter(Boolean);
+
+        // ✅ Hide original select (keep layout intact)
+        select.style.display = "none";
+
+        /* ---------------------------------------------------------
+           UI: Wrapper (inserted where select exists)
+           --------------------------------------------------------- */
+        const wrapper = document.createElement("div");
+        wrapper.style.position = "relative";
+        wrapper.style.display = "inline-block";
+        wrapper.style.zIndex = "99999";
+
+        /* ---------------------------------------------------------
+           ✅ Button (single-line, toggle)
+           --------------------------------------------------------- */
+        const button = document.createElement("button");
+        button.innerHTML = `
+            <span>Filter Monsters</span>
+            <span id="monster-count" style="
+                background:#171c2f;
+                border:1px solid #303a60;
+                padding:2px 6px;
+                border-radius:12px;
+                font-size:12px;
+                color:#8aa2ff;
+                white-space:nowrap;
+            ">0 selected</span>
+            <span style="font-size:12px;">⏷</span>
+        `;
+        button.style.cssText = `
+            padding:8px 14px;
+            background:#1e2235;
+            color:#cdd4ff;
+            border:1px solid #303a60;
+            border-radius:6px;
+            cursor:pointer;
+            font-size:14px;
+            width:260px;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            white-space:nowrap;
+            gap:10px;
+        `;
+
+        /* ---------------------------------------------------------
+           ✅ Dropdown panel (no gap)
+           --------------------------------------------------------- */
+        const panel = document.createElement("div");
+        panel.style.cssText = `
+            position:absolute;
+            top:100%;
+            left:0;
+            margin-top:-1px;
+            width:260px;
+            background:#0f121d;
+            border:1px solid #303a60;
+            border-radius:6px;
+            padding:10px;
+            display:none;
+            max-height:300px;
+            overflow-y:auto;
+            box-shadow:0 4px 8px rgba(0,0,0,0.4);
+        `;
+
+        /* ---------------------------------------------------------
+           ✅ Action buttons
+           --------------------------------------------------------- */
+        const actions = document.createElement("div");
+        actions.style.cssText = `display:flex; gap:10px; margin-bottom:10px;`;
+
+        const btnSelectAll = document.createElement("button");
+        btnSelectAll.textContent = "Select All";
+        btnSelectAll.style.cssText = `
+            padding:4px 10px;
+            background:#284b63;
+            color:white;
+            border:1px solid #3c6a8a;
+            border-radius:4px;
+            cursor:pointer;
+            font-size:12px;
+        `;
+
+        const btnClear = document.createElement("button");
+        btnClear.textContent = "Clear";
+        btnClear.style.cssText = `
+            padding:4px 10px;
+            background:#4b1e1e;
+            color:white;
+            border:1px solid #6a3c3c;
+            border-radius:4px;
+            cursor:pointer;
+            font-size:12px;
+        `;
+
+        actions.appendChild(btnSelectAll);
+        actions.appendChild(btnClear);
+        panel.appendChild(actions);
+
+        /* ---------------------------------------------------------
+           ✅ Checkbox list
+           --------------------------------------------------------- */
+        const checkboxList = document.createElement("div");
+
+        names.forEach(name => {
+            const label = document.createElement("label");
+            label.style.cssText = `
+                display:flex;
+                align-items:center;
+                padding:4px 0;
+                color:#cdd4ff;
+                font-size:14px;
+                cursor:pointer;
+                gap:8px;
+            `;
+
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.value = name;
+            cb.style.width = "16px";
+            cb.style.height = "16px";
+
+            cb.addEventListener("change", filterMonsters);
+
+            const text = document.createElement("span");
+            text.textContent = name.replace(/\b\w/g, c => c.toUpperCase());
+
+            label.appendChild(cb);
+            label.appendChild(text);
+            checkboxList.appendChild(label);
+        });
+
+        panel.appendChild(checkboxList);
+
+        /* ---------------------------------------------------------
+           ✅ Inject UI
+           --------------------------------------------------------- */
+        select.insertAdjacentElement("afterend", wrapper);
+        wrapper.appendChild(button);
+        wrapper.appendChild(panel);
+
+        /* ---------------------------------------------------------
+           ✅ Toggle behavior
+           --------------------------------------------------------- */
+        let closeTimeout = null;
+        let isOpen = false;
+
+        button.addEventListener("click", (e) => {
+            e.stopPropagation();
+            clearTimeout(closeTimeout);
+            isOpen = !isOpen;
+            panel.style.display = isOpen ? "block" : "none";
+        });
+
+        wrapper.addEventListener("mouseenter", () => {
+            clearTimeout(closeTimeout);
+        });
+
+        wrapper.addEventListener("mouseleave", () => {
+            closeTimeout = setTimeout(() => {
+                panel.style.display = "none";
+                isOpen = false;
+            }, 150);
+        });
+
+        /* ---------------------------------------------------------
+           ✅ Filtering + persistence
+           --------------------------------------------------------- */
+        function filterMonsters() {
+            const selected = [...panel.querySelectorAll("input:checked")]
+                .map(cb => cb.value);
+
+            // ✅ Persist per-wave filter
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(selected));
+
+            // ✅ Update badge
+            document.querySelector("#monster-count").textContent =
+                `${selected.length} selected`;
+
+            document.querySelectorAll(".monster-container .monster-card")
+                .forEach(card => {
+                    const name = card.querySelector("h3")?.textContent.trim().toLowerCase();
+
+                    // ✅ Hide everything if none selected
+                    if (selected.length === 0) {
+                        card.style.display = "none";
+                        return;
+                    }
+
+                    card.style.display = selected.includes(name) ? "" : "none";
+                });
+        }
+
+        /* ---------------------------------------------------------
+           ✅ Restore persisted filter IMMEDIATELY (before auto-loot)
+           --------------------------------------------------------- */
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+
+        if (Array.isArray(saved)) {
+            checkboxList.querySelectorAll("input[type='checkbox']").forEach(cb => {
+                cb.checked = saved.includes(cb.value);
+            });
+
+            document.querySelectorAll(".monster-container .monster-card")
+                .forEach(card => {
+                    const name = card.querySelector("h3")?.textContent.trim().toLowerCase();
+
+                    if (saved.length === 0) {
+                        card.style.display = "none";
+                    } else {
+                        card.style.display = saved.includes(name) ? "" : "none";
+                    }
+                });
+
+            document.querySelector("#monster-count").textContent =
+                `${saved.length} selected`;
+        }
+
+        /* ---------------------------------------------------------
+           ✅ Select All / Clear actions
+           --------------------------------------------------------- */
+        btnSelectAll.addEventListener("click", () => {
+            checkboxList.querySelectorAll("input").forEach(cb => cb.checked = true);
+            filterMonsters();
+        });
+
+        btnClear.addEventListener("click", () => {
+            checkboxList.querySelectorAll("input").forEach(cb => cb.checked = false);
+            filterMonsters();
+        });
+    }
+
+    window.addEventListener("load", () => setTimeout(init, 200));
 })();
