@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.12.1
+// @version      2.14.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -1350,6 +1350,8 @@ function modifySideNav() {
             });
     })();
 
+
+
     // keep your existing bootstraps
     initSidebarQuestWidget();
     initAdventurersGuildQuests();
@@ -2023,6 +2025,65 @@ function modMonsterCards() {
         .trim()
         .toLowerCase();
 
+    // --- Replace Loot button with inline Claim button ---
+    const replaceLootButton = (card, monsterId) => {
+        // Find native loot button
+        const lootBtn = card.querySelector('button.join-btn');
+        if (!lootBtn) return;
+        if (lootBtn.__claimReplaced) return;
+
+        // Disable navigation if wrapped in <a>
+        const anchor = lootBtn.closest('a');
+        if (anchor) anchor.removeAttribute('href');
+
+        const claimBtn = document.createElement('button');
+        claimBtn.className = 'join-btn';
+        claimBtn.textContent = '🎁 Claim';
+        claimBtn.style.cursor = 'pointer';
+        claimBtn.__busy = false;
+
+        claimBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            if (claimBtn.__busy) return;
+
+            claimBtn.__busy = true;
+            claimBtn.disabled = true;
+            claimBtn.textContent = 'Claiming…';
+
+            try {
+                const res = await fetch('/loot.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    credentials: 'same-origin',
+                    body: `monster_id=${encodeURIComponent(monsterId)}`
+                });
+
+                const text = await res.text();
+                const ok = /success|claimed|looted/i.test(text);
+                const already = /already\s+claimed/i.test(text);
+
+                if (ok || already) {
+                    claimBtn.textContent = '✅ Claimed';
+                    claimBtn.disabled = true;
+
+                    // Optional: visually mark card as looted
+                    card.classList.add('looted');
+                } else {
+                    throw new Error(text);
+                }
+            } catch (err) {
+                console.error('Loot failed', err);
+                claimBtn.textContent = '🎁 Claim';
+                claimBtn.disabled = false;
+                claimBtn.__busy = false;
+                alert('Loot failed. Try again.');
+            }
+        });
+
+        lootBtn.replaceWith(claimBtn);
+        claimBtn.__claimReplaced = true;
+    };
+
     // --- Read level from local DOM (NO FETCH) ---
     const lvlText = document.querySelector('.gtb-level')?.textContent || ''; // e.g., "LV 1054"
     const lvlVal = parseNumeric(lvlText); // → 1054
@@ -2140,7 +2201,7 @@ function modMonsterCards() {
                     valueEl.textContent = showExp;
                 }
             }
-
+            replaceLootButton(card, mId);
         } catch (err) {
             console.error('Failed to update monster card', {
                 mId,
@@ -2148,6 +2209,9 @@ function modMonsterCards() {
             });
         }
     });
+
+
+
 }
 
 ////insta join via picture click
@@ -2985,7 +3049,7 @@ function isExcludedFromLootPlan(card) {
             clearAutoState();
             setRunButtonState({
                 running: false,
-                text: 'loot to next level'
+                text: 'Loot to next level'
             });
             setStopButtonState({
                 visible: false
@@ -9236,8 +9300,8 @@ listDiv.appendChild(card);
                 <a href="/guild_dungeon_location.php?instance_id=${instance_id}&location_id=14">Crown of Calibration</a>
 
                 <strong>PvPE</strong>
-                <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=7">Duel Heart Trial</a>
-                <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=8">Ring Ward Trial</a>
+                <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=7">Ring Ward Trial</a>
+                <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=8">Duel Heart Trial</a>
                 <a href="/pvp_style_node.php?source=cube&instance_id=${instance_id}&node_id=9">Tyrant Conclave</a>
 
                 <strong>Army</strong>
@@ -9534,19 +9598,25 @@ listDiv.appendChild(card);
         // --- Floating Bar UI ---
         const bar = document.createElement("div");
         bar.id = "floatingHPBar";
-        bar.innerHTML = `
-            <div class="hp-side left">
-                <span class="label">YOU</span>
-                <div class="hpBar"><div class="hpFill" id="allyFill"></div></div>
-                <span class="hpText" id="allyText"></span>
-            </div>
+      bar.innerHTML = `
+    <div class="hp-side left">
+        <span class="label">YOU</span>
+        <div class="hpBar">
+            <div class="hpFill" id="allyFill"></div>
+        </div>
+        <span class="hpPercent" id="allyPercent"></span>
+        <span class="hpText" id="allyText"></span>
+    </div>
 
-            <div class="hp-side right">
-                <span class="label">ENEMY</span>
-                <div class="hpBar enemy"><div class="hpFill enemyFill" id="enemyFill"></div></div>
-                <span class="hpText" id="enemyText"></span>
-            </div>
-        `;
+    <div class="hp-side right">
+        <span class="label">ENEMY</span>
+        <div class="hpBar enemy">
+            <div class="hpFill enemyFill" id="enemyFill"></div>
+        </div>
+        <span class="hpPercent" id="enemyPercent"></span>
+        <span class="hpText" id="enemyText"></span>
+    </div>
+`;
 
         document.body.appendChild(bar);
 
@@ -9568,27 +9638,48 @@ const style = document.createElement("style");
                 backdrop-filter: blur(8px);
             }
 
-            #floatingHPBar .hp-side {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                line-height: 1;             /* tight vertical spacing */
-            }
 
-            #floatingHPBar .label {
-                font-size: 11px;            /* smaller text */
-                text-transform: uppercase;
-                opacity: .8;
-                margin-bottom: 2px;         /* reduced space */
-            }
+    #floatingHPBar .hp-side {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        line-height: 1;
+    }
 
-            #floatingHPBar .hpBar {
-                width: 150px;
-                height: 9px;                /* thinner bar */
-                background: rgba(255,255,255,.12);
-                border-radius: 999px;
-                overflow: hidden;
-            }
+    /* Force fixed height rows */
+    #floatingHPBar .label {
+        font-size: 11px;
+        height: 13px;
+        display: flex;
+        align-items: center;
+        margin-bottom: 2px;
+        opacity: .8;
+    }
+
+    #floatingHPBar .hpBar {
+        width: 150px;
+        height: 9px;
+        margin: 0;
+    }
+
+    #floatingHPBar .hpPercent {
+        font-size: 10px;
+        height: 12px;
+        display: flex;
+        align-items: center;
+        margin-top: 2px;
+        opacity: .75;
+    }
+
+    #floatingHPBar .hpText {
+        font-size: 10px;
+        height: 12px;
+        display: flex;
+        align-items: center;
+        margin-top: 2px;
+        opacity: .9;
+    }
+
 
             #floatingHPBar .hpFill {
                 height: 100%;
@@ -9601,11 +9692,8 @@ const style = document.createElement("style");
                 background: linear-gradient(90deg, rgba(255,107,107,.95), rgba(255,209,102,.6));
             }
 
-            #floatingHPBar .hpText {
-                font-size: 10px;            /* smaller numbers */
-                margin-top: 2px;            /* reduced spacing */
-                opacity: .9;
-            }
+
+
         `;
         document.head.appendChild(style);
 
@@ -9644,318 +9732,970 @@ const style = document.createElement("style");
 
         // Update YOU
         if (ally.totalMax > 0) {
-            const pct = (ally.totalHP / ally.totalMax) * 100;
-            document.getElementById("allyFill").style.width = pct + "%";
-            document.getElementById("allyText").textContent =
-                ally.totalHP.toLocaleString() + " / " + ally.totalMax.toLocaleString();
-        }
+    const pct = (ally.totalHP / ally.totalMax) * 100;
 
+    document.getElementById("allyFill").style.width = pct + "%";
+    document.getElementById("allyText").textContent =
+        ally.totalHP.toLocaleString() + " / " + ally.totalMax.toLocaleString();
+
+    document.getElementById("allyPercent").textContent =
+        pct.toFixed(1) + "%";
+}
         // Update ENEMY
         if (enemy.totalMax > 0) {
             const pct = (enemy.totalHP / enemy.totalMax) * 100;
+
             document.getElementById("enemyFill").style.width = pct + "%";
             document.getElementById("enemyText").textContent =
                 enemy.totalHP.toLocaleString() + " / " + enemy.totalMax.toLocaleString();
+
+            document.getElementById("enemyPercent").textContent =
+                pct.toFixed(1) + "%";
         }
     }
 
 })();
 
-//mobs filter
+//QoL Revamp
 // ==UserScript==
-// @name         Monster Checkbox Dropdown Filter (Final, Wave-Scoped)
-// @match        *://*/*
+// @name         Wave QoL – Monster Filter + Styled QoL Attacks (FINAL)
+// @namespace    wave-qol-stable
+// @version      0.9.0
+// @description  Custom dropdown + custom filters + QoL attacks (fully unified)
+// @match        https://demonicscans.org/active_wave.php*
+// @match        https://demonicscans.org/guild_dungeon_location.php*
+// @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 
 (function () {
-    "use strict";
+  "use strict";
 
-    /* ---------------------------------------------------------
-       ✅ Wave-scoped storage key
-       - wave is always present
-       - gate OR event may be present
-       --------------------------------------------------------- */
-    function getWaveStorageKey() {
-        try {
-            const url = new URL(window.location.href);
+const style = document.createElement("style");
+style.textContent = `
+  .qol-btn {
 
-            const page = url.pathname.replace(/^\/+/, "").replace(/\.php$/, "");
-            const wave = url.searchParams.get("wave") || "nowave";
+    display:inline-flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:2px;
 
-            const gate = url.searchParams.get("gate");
-            const event = url.searchParams.get("event");
+    padding:7px 12px;
+    font-size:13px;
+    font-weight:500;
+    color:#e8edff;
 
-            let scope;
-            if (gate) {
-                scope = `gate${gate}`;
-            } else if (event) {
-                scope = `event${event}`;
-            } else {
-                scope = "default";
-            }
+    background:#1e2235;
+    border:1px solid #303a60;
+    border-radius:6px;
 
-            return `tm_monster_filter_${page}_wave${wave}_${scope}`;
-        } catch {
-            return "tm_monster_filter_fallback";
-        }
+    cursor:pointer;
+    user-select:none;
+    white-space:normal;
+    text-align:center;
+
+   transition:
+      background 0.15s ease,
+      border-color 0.15s ease,
+      transform 0.05s ease,
+      opacity 0.15s ease;
+  }
+
+  .qol-btn:hover:not(:disabled) {
+    background:#262b46;
+    border-color:#3c4a7a;
+  }
+
+  .qol-btn:active:not(:disabled) {
+    transform:translateY(1px);
+  }
+
+  .qol-btn:disabled {
+    opacity:0.55;
+    cursor:not-allowed;
+  }
+
+ .qol-btn.primary {
+    background:#2d7bff;
+    border-color:#2d7bff;
+    color:#ffffff;
+  }
+
+  .qol-btn.primary:hover:not(:disabled) {
+    background:#3b86ff;
+    border-color:#3b86ff;
+  }
+
+.qol-btn.secondary {
+    background:#1e2235;
+    border-color:#303a60;
+    color:#cdd4ff;
+  }
+
+
+`;
+document.head.appendChild(style);
+  /* ===================== Utilities ===================== */
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  function getUserId() {
+    const m = document.cookie.match(/(?:^|;\s*)demon=(\d+)/);
+    return m ? m[1] : null;
+  }
+
+  function getWaveStorageKey() {
+    try {
+      const url = new URL(location.href);
+      const page = url.pathname.replace(/^\/+/, "").replace(/\.php$/, "");
+      const wave = url.searchParams.get("wave") || "nowave";
+      const gate = url.searchParams.get("gate");
+      const event = url.searchParams.get("event");
+      const scope = gate ? `gate${gate}` : event ? `event${event}` : "default";
+      return `tm_monster_filter_${page}_wave${wave}_${scope}`;
+    } catch {
+      return "tm_monster_filter_fallback";
+    }
+  }
+
+  const STORAGE_KEY = getWaveStorageKey();
+  const isDungeon = location.pathname.includes("guild_dungeon_location.php");
+  const instanceId = isDungeon
+    ? new URL(location.href).searchParams.get("instance_id")
+    : null;
+function getAtkStorageKey() {
+  try {
+    const url = new URL(location.href);
+    const page = url.pathname.replace(/^\/+/, "").replace(/\.php$/, "");
+    const wave = url.searchParams.get("wave") || "nowave";
+    const gate = url.searchParams.get("gate");
+    const event = url.searchParams.get("event");
+    const scope = gate ? `gate${gate}` : event ? `event${event}` : "default";
+    return `tm_qol_atklist_${page}_wave${wave}_${scope}`;
+  } catch {
+    return "tm_qol_atklist_fallback";
+  }
+}
+
+const ATK_STORAGE_KEY = getAtkStorageKey();
+
+  /* ===================== Join / Attack ===================== */
+  async function joinWaveMonster(mid) {
+    const userId = getUserId();
+    if (!userId) return false;
+    const form = new FormData();
+    form.append("monster_id", mid);
+    form.append("user_id", userId);
+    const res = await fetch("user_join_battle.php", {
+      method: "POST",
+      credentials: "include",
+      body: form
+    });
+    const txt = (await res.text()).toLowerCase();
+    return txt.includes("successfully") || txt.includes("already");
+  }
+
+  async function joinDungeonMonster(mid) {
+    const form = new FormData();
+    form.append("dgmid", mid);
+    form.append("instance_id", instanceId);
+    const res = await fetch("dungeon_join_battle.php", {
+      method: "POST",
+      credentials: "include",
+      body: form
+    });
+    const txt = (await res.text()).toLowerCase();
+    return txt.includes("successfully") || txt.includes("already");
+  }
+
+  async function attackMonster(mid, stamina) {
+    const form = new FormData();
+    if (isDungeon) {
+      form.append("dgmid", mid);
+      form.append("instance_id", instanceId);
+    } else {
+      form.append("monster_id", mid);
     }
 
-    function init(attempt = 0) {
+    const skillId =
+      stamina === 1 ? 0 :
+      stamina === 10 ? -1 :
+      stamina === 50 ? -2 :
+      stamina === 100 ? -3 : -4;
 
-        // ✅ Do nothing if Wave Addon UI is present
-        if (document.querySelector("#wave-addon-filter-panel")) {
-            console.log("[Monster Filter] Wave Addon detected — skipping custom filter.");
-            return;
+    form.append("skill_id", skillId);
+    form.append("stamina_cost", stamina);
+
+    const res = await fetch("damage.php", {
+      method: "POST",
+      credentials: "include",
+      body: form
+    });
+    const txt = (await res.text()).toLowerCase();
+    return res.ok && (txt.includes("success") || txt.includes("damage"));
+  }
+
+  /* ===================== Init ===================== */
+  function init(attempt = 0) {
+    const cards = [...document.querySelectorAll(".monster-container .monster-card ")];
+    const fNameSel = document.querySelector("#fNameSel");
+    const qolTop = document.querySelector(".qol-top");
+    const selectActions = document.querySelector(".qol-select-actions");
+    const qolAttacks = document.querySelector(".qol-attacks");
+
+    if (!cards.length || !fNameSel || !qolTop || !selectActions || !qolAttacks) {
+      if (attempt < 30) return setTimeout(() => init(attempt + 1), 300);
+      return;
+    }
+
+    /* ===================== Disable Native Filters ===================== */
+    ["fJoined", "fUnjoined", "fCapNotReached"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.closest("label")?.style.setProperty("display", "none");
+    });
+
+    fNameSel.style.display = "none";
+
+    /* ===================== Filter State ===================== */
+    const filterState = {
+      joined: true,
+      unjoined: true,
+      cap: false
+    };
+
+    /* ===================== DROPDOWN ===================== */
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "position:relative;display:inline-block;z-index:99999;";
+
+    const dropBtn = document.createElement("button");
+    dropBtn.innerHTML = `
+      <span>Filter Monsters</span>
+      <span id="monster-count"
+        style="background:#171c2f;border:1px solid #303a60;
+        padding:2px 6px;border-radius:12px;
+        font-size:12px;color:#8aa2ff;">0 selected</span>
+      <span style="font-size:12px;">⏷</span>
+    `;
+    dropBtn.style.cssText =
+      "padding:8px 14px;background:#1e2235;color:#cdd4ff;" +
+      "border:1px solid #303a60;border-radius:6px;" +
+      "font-size:14px;width:260px;display:flex;justify-content:space-between;";
+
+    const panel = document.createElement("div");
+    panel.style.cssText =
+      "position:absolute;top:100%;left:0;margin-top:-1px;width:260px;" +
+      "background:#0f121d;border:1px solid #303a60;border-radius:6px;" +
+      "padding:10px;display:none;max-height:300px;overflow-y:auto;";
+
+    const actions = document.createElement("div");
+    actions.style.cssText = "display:flex;gap:10px;margin-bottom:10px;";
+
+    const btnSelectAll = document.createElement("button");
+    btnSelectAll.textContent = "Select All";
+    const btnClear = document.createElement("button");
+    btnClear.textContent = "Clear";
+    actions.append(btnSelectAll, btnClear);
+    panel.appendChild(actions);
+
+    const list = document.createElement("div");
+    const names = [...new Set(cards.map(c => c.dataset.name?.toLowerCase()))].filter(Boolean);
+
+    names.forEach(name => {
+      const lbl = document.createElement("label");
+      lbl.style.cssText = "display:flex;gap:8px;padding:4px 0;color:#cdd4ff;";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = name;
+      cb.onchange = applyAllFilters;
+      lbl.append(cb, name.replace(/\b\w/g, x => x.toUpperCase()));
+      list.appendChild(lbl);
+    });
+
+    panel.appendChild(list);
+    wrapper.append(dropBtn, panel);
+    fNameSel.after(wrapper);
+
+    dropBtn.onclick = e => {
+      e.stopPropagation();
+      panel.style.display = panel.style.display === "block" ? "none" : "block";
+    };
+
+
+// ✅ Close dropdown when mouse leaves panel
+panel.addEventListener("mouseleave", () => {
+  panel.style.display = "none";
+  //dropdownOpen = false;
+});
+
+
+    /* ===================== Custom Status Filters ===================== */
+    const statusFilters = document.createElement("div");
+    statusFilters.style.cssText =
+      "display:flex;gap:16px;margin-top:8px;color:#cdd4ff;font-size:13px;";
+
+    function makeStatus(label, key, def) {
+      const l = document.createElement("label");
+      l.style.cssText = "display:flex;gap:6px;cursor:pointer;";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = def;
+      cb.onchange = () => {
+        filterState[key] = cb.checked;
+        applyAllFilters();
+      };
+      l.append(cb, " " + label);
+      return l;
+    }
+
+    statusFilters.append(
+      makeStatus("Joined", "joined", true),
+      makeStatus("Unjoined", "unjoined", true),
+      makeStatus("CAP not reached", "cap", false)
+    );
+
+    wrapper.after(statusFilters);
+
+    /* ===================== Unified Filter ===================== */
+    function applyAllFilters() {
+      const selected =
+        [...list.querySelectorAll("input:checked")].map(cb => cb.value);
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(selected));
+      document.getElementById("monster-count").textContent =
+        `${selected.length} selected`;
+
+      cards.forEach(card => {
+        const name = card.dataset.name?.toLowerCase();
+
+        const passName = selected.length === 0 || selected.includes(name);
+        const passJoin =
+          (filterState.joined && card.dataset.joined === "1") ||
+          (filterState.unjoined && card.dataset.unjoined === "1");
+        const passCap =
+          !filterState.cap || card.dataset.capnotreached === "1";
+
+        card.style.display =
+          passName && passJoin && passCap ? "" : "none";
+      });
+    }
+
+    btnSelectAll.onclick = () => {
+      list.querySelectorAll("input").forEach(cb => cb.checked = true);
+      applyAllFilters();
+    };
+    btnClear.onclick = () => {
+      list.querySelectorAll("input").forEach(cb => cb.checked = false);
+      applyAllFilters();
+    };
+
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    list.querySelectorAll("input").forEach(cb => cb.checked = saved.includes(cb.value));
+    applyAllFilters();
+
+    /* ===================== Custom Monster Selection ===================== */
+      let selectedMonsterIds = JSON.parse(
+          localStorage.getItem(ATK_STORAGE_KEY) || "[]"
+      );
+
+      function syncPicks() {
+          document.querySelectorAll(".qol-pick").forEach(cb => {
+              cb.checked = selectedMonsterIds.includes(cb.dataset.mid);
+          });
+
+          localStorage.setItem(
+              ATK_STORAGE_KEY,
+              JSON.stringify(selectedMonsterIds)
+          );
+
+          statusBar.textContent = `✅ ${selectedMonsterIds.length} monsters selected`;
+      }
+
+    cards.forEach(card => {
+      const wrap = card.querySelector(".pickWrap");
+      const native = card.querySelector(".pickMonster");
+      if (!wrap || !native) return;
+
+        native.disabled = true;
+        native.style.display = "none";
+wrap.style.padding = "0";
+wrap.style.margin = "0";
+wrap.style.height = "auto";
+
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "qol-pick";
+      cb.dataset.mid = card.dataset.monsterId;
+      cb.onchange = () => {
+        if (cb.checked) selectedMonsterIds.push(cb.dataset.mid);
+        else selectedMonsterIds = selectedMonsterIds.filter(i => i !== cb.dataset.mid);
+        syncPicks();
+      };
+      wrap.appendChild(cb);
+    });
+
+    /* ===================== Status Bar ===================== */
+    const statusBar = document.createElement("div");
+    statusBar.style.cssText =
+      "margin-top:10px;padding:6px 10px;background:#171c2f;" +
+      "border:1px solid #303a60;color:#8aa2ff;font-size:13px;border-radius:6px;";
+    qolTop.appendChild(statusBar);
+
+    /* ===================== Select Actions ===================== */
+    const newWrap = selectActions.cloneNode(false);
+    selectActions.replaceWith(newWrap);
+
+    const btnSV = document.createElement("button");
+    btnSV.className = "qol-btn secondary";
+    btnSV.textContent = "✅ Select visible";
+    btnSV.onclick = () => {
+      selectedMonsterIds = cards
+        .filter(c => c.style.display !== "none")
+        .map(c => c.dataset.monsterId);
+      syncPicks();
+    };
+
+    const btnCLR = document.createElement("button");
+    btnCLR.className = "qol-btn secondary";
+    btnCLR.textContent = "🧹 Clear";
+    btnCLR.onclick = () => {
+      selectedMonsterIds = [];
+      localStorage.removeItem(ATK_STORAGE_KEY);
+      syncPicks();
+    };
+
+    newWrap.append(btnSV, btnCLR);
+
+    /* ===================== Attack Buttons ===================== */
+    const attackWrap = document.createElement("div");
+    attackWrap.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;";
+    attackWrap.style.cssText += "align-items:stretch;";
+    qolAttacks.replaceWith(attackWrap);
+
+    [1, 10, 50, 100, 200].forEach(stam => {
+      const btn = document.createElement("button");
+      btn.className = "qol-btn primary";
+      btn.style.minWidth = "165px";
+      btn.innerHTML = `⚡ Quick Join & Attack <span style="opacity:.8">(${stam})</span>`;
+      btn.onclick = async () => {
+        if (!selectedMonsterIds.length) return;
+        btn.disabled = true;
+        for (let i = 0; i < selectedMonsterIds.length; i++) {
+          const id = selectedMonsterIds[i];
+          statusBar.textContent =
+            `⏳ Attacking ${i + 1}/${selectedMonsterIds.length}`;
+          isDungeon ? await joinDungeonMonster(id) : await joinWaveMonster(id);
+          await sleep(150);
+          await attackMonster(id, stam);
+          await sleep(400);
         }
+        statusBar.textContent = "✅ Done";
+        btn.disabled = false;
+      };
+      attackWrap.appendChild(btn);
+    });
 
-        const cards = document.querySelectorAll(".monster-container .monster-card");
-        const select = document.querySelector("#fNameSel");
+    syncPicks();
+  }
 
-        if (!select || cards.length === 0) {
-            if (attempt < 30) return setTimeout(() => init(attempt + 1), 300);
-            return;
-        }
+  window.addEventListener("load", () => setTimeout(init, 200));
 
-        const STORAGE_KEY = getWaveStorageKey();
+    if (location.pathname.includes("guild_dungeon_location.php")) {
+  initGuildDungeonQoL();
+}
 
-        // ✅ Extract unique monster names
-        const names = [...new Set(
-            [...cards].map(card =>
-                card.querySelector("h3")?.textContent.trim().toLowerCase()
-            )
-        )].filter(Boolean);
+function initGuildDungeonQoL(attempt = 0) {
 
-        // ✅ Hide original select (keep layout intact)
-        select.style.display = "none";
+  if (!location.pathname.includes("guild_dungeon_location.php")) return;
 
-        /* ---------------------------------------------------------
-           UI: Wrapper (inserted where select exists)
-           --------------------------------------------------------- */
-        const wrapper = document.createElement("div");
-        wrapper.style.position = "relative";
-        wrapper.style.display = "inline-block";
-        wrapper.style.zIndex = "99999";
+  const grid = document.querySelector(".grid");
+  if (!grid) {
+    if (attempt < 25) return setTimeout(() => initGuildDungeonQoL(attempt + 1), 300);
+    return;
+  }
 
-        /* ---------------------------------------------------------
-           ✅ Button (single-line, toggle)
-           --------------------------------------------------------- */
-        const button = document.createElement("button");
-        button.innerHTML = `
-            <span>Filter Monsters</span>
-            <span id="monster-count" style="
-                background:#171c2f;
-                border:1px solid #303a60;
-                padding:2px 6px;
-                border-radius:12px;
-                font-size:12px;
-                color:#8aa2ff;
-                white-space:nowrap;
-            ">0 selected</span>
-            <span style="font-size:12px;">⏷</span>
-        `;
-        button.style.cssText = `
-            padding:8px 14px;
-            background:#1e2235;
-            color:#cdd4ff;
-            border:1px solid #303a60;
-            border-radius:6px;
-            cursor:pointer;
-            font-size:14px;
-            width:260px;
-            display:flex;
-            align-items:center;
-            justify-content:space-between;
-            white-space:nowrap;
-            gap:10px;
-        `;
+  /* ===================== Instance / Storage ===================== */
+  const instanceId = new URL(location.href).searchParams.get("instance_id") || "unknown";
+  const ATK_STORAGE_KEY = `tm_qol_dungeon_atk_${instanceId}`;
+  const FILTER_STORAGE_KEY = `tm_qol_dungeon_filters_${instanceId}`;
 
-        /* ---------------------------------------------------------
-           ✅ Dropdown panel (no gap)
-           --------------------------------------------------------- */
-        const panel = document.createElement("div");
-        panel.style.cssText = `
-            position:absolute;
-            top:100%;
-            left:0;
-            margin-top:-1px;
-            width:260px;
-            background:#0f121d;
-            border:1px solid #303a60;
-            border-radius:6px;
-            padding:10px;
-            display:none;
-            max-height:300px;
-            overflow-y:auto;
-            box-shadow:0 4px 8px rgba(0,0,0,0.4);
-        `;
+  /* ===================== Helpers ===================== */
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-        /* ---------------------------------------------------------
-           ✅ Action buttons
-           --------------------------------------------------------- */
-        const actions = document.createElement("div");
-        actions.style.cssText = `display:flex; gap:10px; margin-bottom:10px;`;
+  function getDungeonMonsterName(card) {
+    const titleDiv = card.querySelector('div[style*="font-weight:700"]');
+    if (!titleDiv) return null;
 
-        const btnSelectAll = document.createElement("button");
-        btnSelectAll.textContent = "Select All";
-        btnSelectAll.style.cssText = `
-            padding:4px 10px;
-            background:#284b63;
-            color:white;
-            border:1px solid #3c6a8a;
-            border-radius:4px;
-            cursor:pointer;
-            font-size:12px;
-        `;
+    return [...titleDiv.childNodes]
+      .filter(n => n.nodeType === Node.TEXT_NODE)
+      .map(n => n.textContent.trim())
+      .join(" ") || null;
+  }
 
-        const btnClear = document.createElement("button");
-        btnClear.textContent = "Clear";
-        btnClear.style.cssText = `
-            padding:4px 10px;
-            background:#4b1e1e;
-            color:white;
-            border:1px solid #6a3c3c;
-            border-radius:4px;
-            cursor:pointer;
-            font-size:12px;
-        `;
+  async function joinDungeonMonster(mid) {
+    const form = new FormData();
+    form.append("dgmid", mid);
+    form.append("instance_id", instanceId);
+    await fetch("dungeon_join_battle.php", {
+      method: "POST",
+      credentials: "include",
+      body: form
+    });
+  }
 
-        actions.appendChild(btnSelectAll);
-        actions.appendChild(btnClear);
-        panel.appendChild(actions);
+  async function attackMonster(mid, stamina) {
+    const skillId =
+      stamina === 1 ? 0 :
+      stamina === 10 ? -1 :
+      stamina === 50 ? -2 :
+      stamina === 100 ? -3 : -4;
 
-        /* ---------------------------------------------------------
-           ✅ Checkbox list
-           --------------------------------------------------------- */
-        const checkboxList = document.createElement("div");
+    const form = new FormData();
+    form.append("dgmid", mid);
+    form.append("instance_id", instanceId);
+    form.append("skill_id", skillId);
+    form.append("stamina_cost", stamina);
 
-        names.forEach(name => {
-            const label = document.createElement("label");
-            label.style.cssText = `
-                display:flex;
-                align-items:center;
-                padding:4px 0;
-                color:#cdd4ff;
-                font-size:14px;
-                cursor:pointer;
-                gap:8px;
-            `;
+    await fetch("damage.php", {
+      method: "POST",
+      credentials: "include",
+      body: form
+    });
+  }
 
-            const cb = document.createElement("input");
-            cb.type = "checkbox";
-            cb.value = name;
-            cb.style.width = "16px";
-            cb.style.height = "16px";
+  /* ===================== Panel Target ===================== */
+  const leftPanels = document.querySelectorAll(".grid > div:first-child .panel");
+  const monstersPanel = leftPanels[1];
+  if (!monstersPanel) return;
 
-            cb.addEventListener("change", filterMonsters);
+  const header = monstersPanel.querySelector(".h");
+  const cards = [...monstersPanel.querySelectorAll(".mon")];
+  if (!cards.length) return;
 
-            const text = document.createElement("span");
-            text.textContent = name.replace(/\b\w/g, c => c.toUpperCase());
+  cards.forEach(card => {
+    const name = getDungeonMonsterName(card);
+    if (name) card.dataset.name = name.toLowerCase();
+  });
 
-            label.appendChild(cb);
-            label.appendChild(text);
-            checkboxList.appendChild(label);
-        });
+  /* ===================== Root ===================== */
+  const qolRoot = document.createElement("div");
+  qolRoot.style.cssText = `
+    margin-top:10px;
+    padding:10px;
+    background:#0f121d;
+    border:1px solid #303a60;
+    border-radius:8px;
+  `;
 
-        panel.appendChild(checkboxList);
+  qolRoot.innerHTML = `
+    <div class="qol-filter-row"></div>
+    <div class="qol-select-actions" style="margin-top:10px"></div>
+    <div class="qol-attacks" style="margin-top:10px"></div>
+    <div class="qol-status" style="margin-top:10px"></div>
+  `;
 
-        /* ---------------------------------------------------------
-           ✅ Inject UI
-           --------------------------------------------------------- */
-        select.insertAdjacentElement("afterend", wrapper);
-        wrapper.appendChild(button);
-        wrapper.appendChild(panel);
+  header.after(qolRoot);
 
-        /* ---------------------------------------------------------
-           ✅ Toggle behavior
-           --------------------------------------------------------- */
-        let closeTimeout = null;
-        let isOpen = false;
+  const filterRow = qolRoot.querySelector(".qol-filter-row");
+  const selectActions = qolRoot.querySelector(".qol-select-actions");
+  const qolAttacks = qolRoot.querySelector(".qol-attacks");
+  const statusWrap = qolRoot.querySelector(".qol-status");
 
-        button.addEventListener("click", (e) => {
-            e.stopPropagation();
-            clearTimeout(closeTimeout);
-            isOpen = !isOpen;
-            panel.style.display = isOpen ? "block" : "none";
-        });
+  filterRow.style.cssText = `
+    display:flex;
+    align-items:flex-start;
+    gap:16px;
+  `;
 
-        wrapper.addEventListener("mouseenter", () => {
-            clearTimeout(closeTimeout);
-        });
+  /* ===================== State ===================== */
+  let selectedMonsterIds = JSON.parse(localStorage.getItem(ATK_STORAGE_KEY) || "[]");
 
-        wrapper.addEventListener("mouseleave", () => {
-            closeTimeout = setTimeout(() => {
-                panel.style.display = "none";
-                isOpen = false;
-            }, 150);
-        });
+  const filterState = JSON.parse(
+    localStorage.getItem(FILTER_STORAGE_KEY) ||
+    JSON.stringify({ joined: true, unjoined: true, cap: false, names: [] })
+  );
 
-        /* ---------------------------------------------------------
-           ✅ Filtering + persistence
-           --------------------------------------------------------- */
-        function filterMonsters() {
-            const selected = [...panel.querySelectorAll("input:checked")]
-                .map(cb => cb.value);
+  /* ===================== Dropdown ===================== */
+  const dropdownWrap = document.createElement("div");
+  dropdownWrap.style.position = "relative";
 
-            // ✅ Persist per-wave filter
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(selected));
+  const dropBtn = document.createElement("button");
+  dropBtn.className = "qol-btn secondary";
+  dropBtn.style.cssText = "width:260px;display:flex;gap:8px;white-space:nowrap;flex-direction: row;";
+  dropBtn.innerHTML = `
+  <span style="flex:1;overflow:hidden;text-overflow:ellipsis;">
+    Filter Monsters
+  </span>
+  <span id="dg-count"
+    style="background:#171c2f;border:1px solid #303a60;
+    padding:2px 6px;border-radius:12px;
+    font-size:12px;color:#8aa2ff;">
+    ${filterState.names.length}
+  </span>
+  <span style="font-size:12px;opacity:.8;">⏷</span>
+`;
 
-            // ✅ Update badge
-            document.querySelector("#monster-count").textContent =
-                `${selected.length} selected`;
 
-            document.querySelectorAll(".monster-container .monster-card")
-                .forEach(card => {
-                    const name = card.querySelector("h3")?.textContent.trim().toLowerCase();
+  const panel = document.createElement("div");
+  panel.style.cssText = `
+    display:none;
+    position:absolute;
+    top:100%;
+    left:0;
+    margin-top:6px;
+    background:#0f121d;
+    border:1px solid #303a60;
+    border-radius:6px;
+    padding:8px;
+    max-height:260px;
+    width:260px;
+    overflow-y:auto;
+    z-index:5;
+  `;
 
-                    // ✅ Hide everything if none selected
-                    if (selected.length === 0) {
-                        card.style.display = "none";
-                        return;
-                    }
+  const names = [...new Set(cards.map(c => c.dataset.name).filter(Boolean))];
 
-                    card.style.display = selected.includes(name) ? "" : "none";
-                });
-        }
+  names.forEach(name => {
+    const lbl = document.createElement("label");
+    lbl.style.cssText = "display:flex;gap:6px;color:#cdd4ff;font-size:13px;";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = name;
+    cb.checked = filterState.names.includes(name);
+    cb.onchange = applyFilters;
+    lbl.append(cb, name.replace(/\b\w/g, ch => ch.toUpperCase()));
+    panel.appendChild(lbl);
+  });
 
-        /* ---------------------------------------------------------
-           ✅ Restore persisted filter IMMEDIATELY (before auto-loot)
-           --------------------------------------------------------- */
-        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  let dropdownOpen = false;
 
-        if (Array.isArray(saved)) {
-            checkboxList.querySelectorAll("input[type='checkbox']").forEach(cb => {
-                cb.checked = saved.includes(cb.value);
+  dropBtn.onclick = e => {
+    e.stopPropagation();
+    dropdownOpen = !dropdownOpen;
+    panel.style.display = dropdownOpen ? "block" : "none";
+  };
+
+  panel.addEventListener("mousedown", e => e.stopPropagation());
+  panel.addEventListener("mouseleave", () => {
+    panel.style.display = "none";
+    dropdownOpen = false;
+  });
+
+  dropdownWrap.append(dropBtn, panel);
+  filterRow.appendChild(dropdownWrap);
+
+  /* ===================== Status Filters ===================== */
+  const statusFilters = document.createElement("div");
+  statusFilters.style.cssText =
+    "display:flex;gap:16px;align-items:center;flex-wrap:wrap;";
+
+  function makeStatus(label, key) {
+    const l = document.createElement("label");
+    l.style.cssText = "display:flex;gap:6px;cursor:pointer;white-space:nowrap;";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = filterState[key];
+    cb.onchange = () => {
+      filterState[key] = cb.checked;
+      applyFilters();
+    };
+    l.append(cb, label);
+    return l;
+  }
+
+  statusFilters.append(
+    makeStatus("Joined", "joined"),
+    makeStatus("Unjoined", "unjoined"),
+    makeStatus("CAP not reached", "cap")
+  );
+
+  filterRow.appendChild(statusFilters);
+
+  /* ===================== Status Bar (BOTTOM) ===================== */
+  const statusBar = document.createElement("div");
+  statusBar.style.cssText =
+    "padding:6px 10px;background:#12162a;border:1px solid #303a60;" +
+    "color:#8aa2ff;font-size:13px;border-radius:6px;";
+  statusWrap.appendChild(statusBar);
+
+  function syncPicks() {
+    document.querySelectorAll(".qol-pick").forEach(cb => {
+      cb.checked = selectedMonsterIds.includes(cb.dataset.mid);
+    });
+    localStorage.setItem(ATK_STORAGE_KEY, JSON.stringify(selectedMonsterIds));
+    statusBar.textContent = `✅ ${selectedMonsterIds.length} monsters selected`;
+  }
+
+  /* ===================== Apply Filters ===================== */
+  function applyFilters() {
+    filterState.names = [...panel.querySelectorAll("input:checked")].map(cb => cb.value);
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(filterState));
+    document.getElementById("dg-count").textContent =
+      `${filterState.names.length} selected`;
+
+    cards.forEach(card => {
+      const name = card.dataset.name || "";
+      const text = card.innerText.toLowerCase();
+      const joined = text.includes("joined") && !text.includes("not joined");
+      const unjoined = text.includes("not joined");
+      const capOk = !filterState.cap || !text.includes("cap reached");
+
+      const pass =
+        (!filterState.names.length || filterState.names.includes(name)) &&
+        ((filterState.joined && joined) || (filterState.unjoined && unjoined)) &&
+        capOk;
+
+      card.style.display = pass ? "" : "none";
+    });
+  }
+
+  /* ===================== Inject Checkboxes ===================== */
+  cards.forEach(card => {
+    const mid = card.querySelector('a[href*="dgmid="]')
+      ?.href.match(/dgmid=(\d+)/)?.[1];
+    if (!mid) return;
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "qol-pick";
+    cb.dataset.mid = mid;
+    cb.style.cssText =
+      "position:absolute;top:8px;left:8px;z-index:5;transform:scale(1.2);";
+
+    cb.onchange = () => {
+      if (cb.checked) {
+        if (!selectedMonsterIds.includes(mid)) selectedMonsterIds.push(mid);
+      } else {
+        selectedMonsterIds = selectedMonsterIds.filter(i => i !== mid);
+      }
+      syncPicks();
+    };
+
+    card.style.position = "relative";
+    card.appendChild(cb);
+  });
+
+  /* ===================== Actions ===================== */
+  const btnSV = document.createElement("button");
+  btnSV.className = "qol-btn secondary";
+  btnSV.textContent = "✅ Select visible";
+  btnSV.onclick = () => {
+    selectedMonsterIds = cards
+      .filter(c => c.style.display !== "none")
+      .map(c => c.querySelector('a[href*="dgmid="]')
+        ?.href.match(/dgmid=(\d+)/)?.[1])
+      .filter(Boolean);
+    syncPicks();
+  };
+
+  const btnCLR = document.createElement("button");
+  btnCLR.className = "qol-btn secondary";
+  btnCLR.textContent = "🧹 Clear";
+  btnCLR.onclick = () => {
+    selectedMonsterIds = [];
+    localStorage.removeItem(ATK_STORAGE_KEY);
+    syncPicks();
+  };
+
+  selectActions.append(btnSV, btnCLR);
+
+  /* ===================== Attack Buttons ===================== */
+  const atkWrap = document.createElement("div");
+  atkWrap.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;";
+  qolAttacks.appendChild(atkWrap);
+
+  [1, 10, 50, 100, 200].forEach(stam => {
+    const b = document.createElement("button");
+    b.className = "qol-btn primary";
+    b.style.minWidth = "210px";
+    b.innerHTML = `
+      <span style="opacity:.75;font-size:12px">⚡ Quick Join & Attack(${stam})</span>
+    `;
+
+    b.onclick = async () => {
+      if (!selectedMonsterIds.length) return;
+      b.disabled = true;
+      b.textContent = "⏳ Working…";
+
+      for (let i = 0; i < selectedMonsterIds.length; i++) {
+        statusBar.textContent = `⏳ Attacking ${i + 1}/${selectedMonsterIds.length}`;
+        await joinDungeonMonster(selectedMonsterIds[i]);
+        await sleep(150);
+        await attackMonster(selectedMonsterIds[i], stam);
+        await sleep(400);
+      }
+
+      statusBar.textContent = "✅ Done";
+      b.disabled = false;
+      b.innerHTML = `
+        <span>⚡ Quick Join & Attack</span>
+        <span style="opacity:.75;font-size:12px">(${stam})</span>
+      `;
+    };
+
+    atkWrap.appendChild(b);
+  });
+
+  applyFilters();
+  syncPicks();
+}
+
+})();
+
+//bosses spawn timer
+(function () {
+  'use strict';
+
+  console.log('[BossTimers] v10.0 – IST server time + Local time');
+
+  /* ================= CONFIG ================= */
+
+  const gatesConfig = [
+    { gate: 3, wave: 8 },
+    { gate: 5, wave: 9 }
+  ];
+
+  /* ================= TIME HELPERS ================= */
+
+  function parseDuration(str) {
+    if (!str) return 0;
+    const n = parseFloat(str);
+    if (str.endsWith('h')) return n * 3600;
+    if (str.endsWith('m')) return n * 60;
+    if (str.endsWith('d')) return n * 86400;
+    return 0;
+  }
+
+  // ✅ SERVER TIME — IST (New Delhi)
+  function formatServerIST(ts) {
+    if (!ts || ts < 1e9) return '—';
+
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata', // ✅ IST
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(new Date(ts * 1000));
+  }
+
+  // ✅ LOCAL TIME — browser timezone
+  function formatLocalTime(ts) {
+    if (!ts || ts < 1e9) return '—';
+
+    return new Intl.DateTimeFormat('en-GB', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(new Date(ts * 1000));
+  }
+
+  /* ================= FETCH ================= */
+
+  function fetchBossData(gate, wave) {
+    const url = `https://demonicscans.org/active_wave.php?gate=${gate}&wave=${wave}`;
+
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        onload: res => {
+          const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+          const cards = doc.querySelectorAll('.auto-summon-card');
+          const bosses = [];
+
+          cards.forEach(card => {
+            const alive = card.dataset.alive === '1';
+            const nextTs = parseInt(card.dataset.nextTs || 0);
+            const name = card.querySelector('.auto-summon-name')?.textContent.trim();
+            const sub = card.querySelector('.auto-summon-sub')?.textContent || '';
+
+            if (!name) return;
+
+            const cycle = parseDuration(sub.match(/Cycle:.*?(\\d+[hmd])/i)?.[1]);
+            const autoDie = parseDuration(sub.match(/Auto-die:.*?(\\d+[hmd])/i)?.[1]);
+
+            const spawnTs = alive ? nextTs - cycle : nextTs;
+            const deathTs = spawnTs + autoDie;
+
+            bosses.push({
+              gate,
+              wave,
+              name,
+              alive,
+              serverSpawn: formatServerIST(spawnTs),
+              serverDeath: formatServerIST(deathTs),
+              localSpawn: formatLocalTime(spawnTs),
+              localDeath: formatLocalTime(deathTs)
             });
+          });
 
-            document.querySelectorAll(".monster-container .monster-card")
-                .forEach(card => {
-                    const name = card.querySelector("h3")?.textContent.trim().toLowerCase();
+          resolve(bosses);
+        },
+        onerror: reject
+      });
+    });
+  }
 
-                    if (saved.length === 0) {
-                        card.style.display = "none";
-                    } else {
-                        card.style.display = saved.includes(name) ? "" : "none";
-                    }
-                });
+  /* ================= INJECT ================= */
 
-            document.querySelector("#monster-count").textContent =
-                `${saved.length} selected`;
-        }
+  function inject(bosses) {
+    const menu = document.querySelector('#game-expanded');
+    if (!menu) return;
 
-        /* ---------------------------------------------------------
-           ✅ Select All / Clear actions
-           --------------------------------------------------------- */
-        btnSelectAll.addEventListener("click", () => {
-            checkboxList.querySelectorAll("input").forEach(cb => cb.checked = true);
-            filterMonsters();
-        });
+    menu.querySelectorAll('.submenu-items a[href*="active_wave.php"]').forEach(link => {
+      if (link.dataset.bossInjected) return;
 
-        btnClear.addEventListener("click", () => {
-            checkboxList.querySelectorAll("input").forEach(cb => cb.checked = false);
-            filterMonsters();
-        });
-    }
+      const url = new URL(link.href);
+      const gate = Number(url.searchParams.get('gate'));
+      const wave = Number(url.searchParams.get('wave'));
 
-    window.addEventListener("load", () => setTimeout(init, 200));
+      const matches = bosses.filter(b => b.gate === gate && b.wave === wave);
+      if (!matches.length) return;
+
+      const box = document.createElement('div');
+      box.style.marginTop = '6px';
+      box.style.paddingTop = '6px';
+      box.style.borderTop = '1px solid rgba(255,255,255,0.25)';
+      box.style.fontSize = '11px';
+
+      matches.forEach(b => {
+        const row = document.createElement('div');
+        row.style.marginTop = '6px';
+        row.innerHTML = `
+          <span style="color:#a78bfa;">${b.name}</span><br>
+          <span style="color:#ffd966;">Server:</span>
+          ${b.serverSpawn}<br>
+          <span style="color:#88ff88;">Local:</span>
+          ${b.localSpawn}
+          ${b.alive ? '<span style="color:#4caf50;"> (NOW)</span>' : ''}
+        `;
+        box.appendChild(row);
+      });
+
+      link.parentElement.appendChild(box);
+      link.dataset.bossInjected = 'true';
+    });
+  }
+
+  /* ================= WAIT FOR MENU ================= */
+
+  function waitForMenu(bosses) {
+    const obs = new MutationObserver(() => {
+      if (document.querySelector('#game-expanded')) {
+        obs.disconnect();
+        inject(bosses);
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  }
+
+  /* ================= START ================= */
+
+  Promise.all(gatesConfig.map(g => fetchBossData(g.gate, g.wave)))
+    .then(res => waitForMenu(res.flat()))
+    .catch(err => console.error('[BossTimers] Error:', err));
 })();
