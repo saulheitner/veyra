@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.14.1
+// @version      2.15.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -9870,6 +9870,11 @@ const style = document.createElement("style");
 //QoL Revamp
 (function () {
   "use strict";
+
+ if (document.getElementById("wave-addon-filter-panel")) {
+    console.log("[QoL] Wave Addon detected — script aborted.");
+    return;
+  }
 
 const style = document.createElement("style");
 style.textContent = `
