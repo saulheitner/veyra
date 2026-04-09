@@ -9942,7 +9942,35 @@ style.textContent = `
 `;
 document.head.appendChild(style);
   /* ===================== Utilities ===================== */
+
+
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+
+       function updateHpBar(userHpAfter) {
+  const wrapper = document.querySelector(".topbar-hp-wrapper");
+  if (!wrapper) return;
+
+  const hpText = wrapper.querySelector(".hp-text");
+  const hpFill = wrapper.querySelector(".res-fill.stamina");
+
+  if (!hpText || !hpFill) return;
+
+  // Extract max HP from text: "💚 51,077 / 570,000 HP"
+  const match = hpText.textContent.match(/\/\s*([\d,]+)\s*HP/i);
+  if (!match) return;
+
+  const maxHp = parseInt(match[1].replace(/,/g, ""), 10);
+  if (!maxHp || maxHp <= 0) return;
+
+  const percent = Math.max(0, Math.min(100, (userHpAfter / maxHp) * 100));
+
+  hpFill.style.width = percent.toFixed(2) + "%";
+  hpText.textContent =
+    `💚 ${userHpAfter.toLocaleString()} / ${maxHp.toLocaleString()} HP`;
+}
+``
+
 
   function getUserId() {
     const m = document.cookie.match(/(?:^|;\s*)demon=(\d+)/);
@@ -9964,6 +9992,7 @@ document.head.appendChild(style);
   }
 
   const STORAGE_KEY = getWaveStorageKey();
+  const STATUS_STORAGE_KEY = STORAGE_KEY + "_status";
   const isDungeon = location.pathname.includes("guild_dungeon_location.php");
   const instanceId = isDungeon
     ? new URL(location.href).searchParams.get("instance_id")
@@ -10014,31 +10043,45 @@ const ATK_STORAGE_KEY = getAtkStorageKey();
   }
 
   async function attackMonster(mid, stamina) {
-    const form = new FormData();
-    if (isDungeon) {
-      form.append("dgmid", mid);
-      form.append("instance_id", instanceId);
-    } else {
-      form.append("monster_id", mid);
-    }
-
-    const skillId =
-      stamina === 1 ? 0 :
-      stamina === 10 ? -1 :
-      stamina === 50 ? -2 :
-      stamina === 100 ? -3 : -4;
-
-    form.append("skill_id", skillId);
-    form.append("stamina_cost", stamina);
-
-    const res = await fetch("damage.php", {
-      method: "POST",
-      credentials: "include",
-      body: form
-    });
-    const txt = (await res.text()).toLowerCase();
-    return res.ok && (txt.includes("success") || txt.includes("damage"));
+  const form = new FormData();
+  if (isDungeon) {
+    form.append("dgmid", mid);
+    form.append("instance_id", instanceId);
+  } else {
+    form.append("monster_id", mid);
   }
+
+  const skillId =
+    stamina === 1 ? 0 :
+    stamina === 10 ? -1 :
+    stamina === 50 ? -2 :
+    stamina === 100 ? -3 : -4;
+
+  form.append("skill_id", skillId);
+  form.append("stamina_cost", stamina);
+
+  const res = await fetch("damage.php", {
+    method: "POST",
+    credentials: "include",
+    body: form
+  });
+
+  if (!res.ok) return false;
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return false;
+  }
+
+  // ✅ Update HP bar from server response
+  if (data?.retaliation?.user_hp_after != null) {
+    updateHpBar(data.retaliation.user_hp_after);
+  }
+
+  return data.status === "success";
+}
 
   /* ===================== Init ===================== */
   function init(attempt = 0) {
@@ -10062,11 +10105,11 @@ const ATK_STORAGE_KEY = getAtkStorageKey();
     fNameSel.style.display = "none";
 
     /* ===================== Filter State ===================== */
-    const filterState = {
-      joined: true,
-      unjoined: true,
-      cap: false
-    };
+      const filterState = Object.assign(
+          { joined: true, unjoined: true, cap: false },
+          JSON.parse(localStorage.getItem(STATUS_STORAGE_KEY) || "{}")
+      );
+
 
     /* ===================== DROPDOWN ===================== */
     const wrapper = document.createElement("div");
@@ -10143,10 +10186,15 @@ panel.addEventListener("mouseleave", () => {
       l.style.cssText = "display:flex;gap:6px;cursor:pointer;";
       const cb = document.createElement("input");
       cb.type = "checkbox";
-      cb.checked = def;
+      cb.checked = filterState[key];
       cb.onchange = () => {
-        filterState[key] = cb.checked;
-        applyAllFilters();
+          filterState[key] = cb.checked;
+          localStorage.setItem(
+              STATUS_STORAGE_KEY,
+              JSON.stringify(filterState)
+          );
+          applyAllFilters();
+
       };
       l.append(cb, " " + label);
       return l;
@@ -10172,9 +10220,8 @@ panel.addEventListener("mouseleave", () => {
       cards.forEach(card => {
         const name = card.dataset.name?.toLowerCase();
 
-        const passName = selected.length === 0 || selected.includes(name);
-        const passJoin =
-          (filterState.joined && card.dataset.joined === "1") ||
+          const passName = selected.length > 0 && selected.includes(name);
+          const passJoin =(filterState.joined && card.dataset.joined === "1") ||
           (filterState.unjoined && card.dataset.unjoined === "1");
         const passCap =
           !filterState.cap || card.dataset.capnotreached === "1";
@@ -10282,22 +10329,31 @@ wrap.style.height = "auto";
       btn.className = "qol-btn primary";
       btn.style.minWidth = "165px";
       btn.innerHTML = `⚡ Quick Join & Attack <span style="opacity:.8">(${stam})</span>`;
-      btn.onclick = async () => {
-        if (!selectedMonsterIds.length) return;
-        btn.disabled = true;
-        for (let i = 0; i < selectedMonsterIds.length; i++) {
-          const id = selectedMonsterIds[i];
-          statusBar.textContent =
-            `⏳ Attacking ${i + 1}/${selectedMonsterIds.length}`;
-          isDungeon ? await joinDungeonMonster(id) : await joinWaveMonster(id);
-          await sleep(150);
-          await attackMonster(id, stam);
-          await sleep(400);
-        }
-        statusBar.textContent = "✅ Done";
-        btn.disabled = false;
-      };
-      attackWrap.appendChild(btn);
+
+        btn.onclick = async () => {
+            if (!selectedMonsterIds.length) return;
+            btn.disabled = true;
+
+            for (let i = 0; i < selectedMonsterIds.length; i++) {
+                const id = selectedMonsterIds[i];
+                statusBar.textContent =
+                    `⏳ Attacking ${i + 1}/${selectedMonsterIds.length}`;
+                isDungeon ? await joinDungeonMonster(id) : await joinWaveMonster(id);
+                await sleep(150);
+                await attackMonster(id, stam);
+                await sleep(400);
+            }
+
+            statusBar.textContent = "✅ Done — refreshing…";
+
+            // ✅ small delay so user sees status
+            setTimeout(() => {
+                location.reload();
+            }, 800);
+        };
+
+
+        attackWrap.appendChild(btn);
     });
 
     syncPicks();
@@ -10320,9 +10376,13 @@ function initGuildDungeonQoL(attempt = 0) {
   }
 
   /* ===================== Instance / Storage ===================== */
-  const instanceId = new URL(location.href).searchParams.get("instance_id") || "unknown";
-  const ATK_STORAGE_KEY = `tm_qol_dungeon_atk_${instanceId}`;
-  const FILTER_STORAGE_KEY = `tm_qol_dungeon_filters_${instanceId}`;
+    const url = new URL(location.href);
+    const instanceId = url.searchParams.get("instance_id") || "unknown";
+    const locationId = url.searchParams.get("location_id") || "unknown";
+
+    const ATK_STORAGE_KEY =
+          `tm_qol_dungeon_atk_${instanceId}_loc${locationId}`;
+    const FILTER_STORAGE_KEY = `tm_qol_dungeon_filters_${instanceId}`;
 
   /* ===================== Helpers ===================== */
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -10348,25 +10408,46 @@ function initGuildDungeonQoL(attempt = 0) {
     });
   }
 
-  async function attackMonster(mid, stamina) {
-    const skillId =
-      stamina === 1 ? 0 :
-      stamina === 10 ? -1 :
-      stamina === 50 ? -2 :
-      stamina === 100 ? -3 : -4;
-
-    const form = new FormData();
+ async function attackMonster(mid, stamina) {
+  const form = new FormData();
+  if (isDungeon) {
     form.append("dgmid", mid);
     form.append("instance_id", instanceId);
-    form.append("skill_id", skillId);
-    form.append("stamina_cost", stamina);
-
-    await fetch("damage.php", {
-      method: "POST",
-      credentials: "include",
-      body: form
-    });
+  } else {
+    form.append("monster_id", mid);
   }
+
+  const skillId =
+    stamina === 1 ? 0 :
+    stamina === 10 ? -1 :
+    stamina === 50 ? -2 :
+    stamina === 100 ? -3 : -4;
+
+  form.append("skill_id", skillId);
+  form.append("stamina_cost", stamina);
+
+  const res = await fetch("damage.php", {
+    method: "POST",
+    credentials: "include",
+    body: form
+  });
+
+  if (!res.ok) return false;
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return false;
+  }
+
+  // ✅ Update HP bar from server response
+  if (data?.retaliation?.user_hp_after != null) {
+    updateHpBar(data.retaliation.user_hp_after);
+  }
+
+  return data.status === "success";
+}
 
   /* ===================== Panel Target ===================== */
   const leftPanels = document.querySelectorAll(".grid > div:first-child .panel");
@@ -10489,7 +10570,7 @@ function initGuildDungeonQoL(attempt = 0) {
   dropdownWrap.append(dropBtn, panel);
   filterRow.appendChild(dropdownWrap);
 
-  /* ===================== Status Filters ===================== */
+   /* ===================== Status Filters ===================== */
   const statusFilters = document.createElement("div");
   statusFilters.style.cssText =
     "display:flex;gap:16px;align-items:center;flex-wrap:wrap;";
@@ -10532,27 +10613,54 @@ function initGuildDungeonQoL(attempt = 0) {
   }
 
   /* ===================== Apply Filters ===================== */
-  function applyFilters() {
-    filterState.names = [...panel.querySelectorAll("input:checked")].map(cb => cb.value);
-    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(filterState));
-    document.getElementById("dg-count").textContent =
-      `${filterState.names.length} selected`;
-
-    cards.forEach(card => {
-      const name = card.dataset.name || "";
-      const text = card.innerText.toLowerCase();
-      const joined = text.includes("joined") && !text.includes("not joined");
-      const unjoined = text.includes("not joined");
-      const capOk = !filterState.cap || !text.includes("cap reached");
-
-      const pass =
-        (!filterState.names.length || filterState.names.includes(name)) &&
-        ((filterState.joined && joined) || (filterState.unjoined && unjoined)) &&
-        capOk;
-
-      card.style.display = pass ? "" : "none";
-    });
+    function getDungeonJoinState(card) {
+  const pill = card.querySelector(".pill");
+  if (!pill) {
+    return { joined: false, unjoined: true };
   }
+
+  const text = pill.textContent.trim().toLowerCase();
+
+  if (text === "joined") {
+    return { joined: true, unjoined: false };
+  }
+
+  if (text === "not joined") {
+    return { joined: false, unjoined: true };
+  }
+
+  // fallback safety
+  return { joined: false, unjoined: true };
+}
+
+function applyFilters() {
+  filterState.names = [...panel.querySelectorAll("input:checked")]
+    .map(cb => cb.value);
+
+  localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(filterState));
+
+  document.getElementById("dg-count").textContent =
+    `${filterState.names.length} selected`;
+
+  cards.forEach(card => {
+    const name = card.dataset.name || "";
+
+    const { joined, unjoined } = getDungeonJoinState(card);
+
+    const capOk =
+      !filterState.cap ||
+      !card.innerText.toLowerCase().includes("cap reached");
+
+    const pass =
+      (filterState.names.length > 0 &&
+       filterState.names.includes(name)) &&
+      ((filterState.joined && joined) ||
+       (filterState.unjoined && unjoined)) &&
+      capOk;
+
+    card.style.display = pass ? "" : "none";
+  });
+}
 
   /* ===================== Inject Checkboxes ===================== */
   cards.forEach(card => {
@@ -10617,26 +10725,25 @@ function initGuildDungeonQoL(attempt = 0) {
       <span style="opacity:.75;font-size:12px">⚡ Quick Join & Attack(${stam})</span>
     `;
 
-    b.onclick = async () => {
-      if (!selectedMonsterIds.length) return;
-      b.disabled = true;
-      b.textContent = "⏳ Working…";
+      b.onclick = async () => {
+          if (!selectedMonsterIds.length) return;
+          b.disabled = true;
+          b.textContent = "⏳ Working…";
 
-      for (let i = 0; i < selectedMonsterIds.length; i++) {
-        statusBar.textContent = `⏳ Attacking ${i + 1}/${selectedMonsterIds.length}`;
-        await joinDungeonMonster(selectedMonsterIds[i]);
-        await sleep(150);
-        await attackMonster(selectedMonsterIds[i], stam);
-        await sleep(400);
-      }
+          for (let i = 0; i < selectedMonsterIds.length; i++) {
+              statusBar.textContent = `⏳ Attacking ${i + 1}/${selectedMonsterIds.length}`;
+              await joinDungeonMonster(selectedMonsterIds[i]);
+              await sleep(150);
+              await attackMonster(selectedMonsterIds[i], stam);
+              await sleep(400);
+          }
 
-      statusBar.textContent = "✅ Done";
-      b.disabled = false;
-      b.innerHTML = `
-        <span>⚡ Quick Join & Attack</span>
-        <span style="opacity:.75;font-size:12px">(${stam})</span>
-      `;
-    };
+          statusBar.textContent = "✅ Done — refreshing…";
+
+          setTimeout(() => {
+              location.reload();
+          }, 800);
+      };
 
     atkWrap.appendChild(b);
   });
