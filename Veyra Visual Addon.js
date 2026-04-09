@@ -10042,8 +10042,9 @@ const ATK_STORAGE_KEY = getAtkStorageKey();
     return txt.includes("successfully") || txt.includes("already");
   }
 
-  async function attackMonster(mid, stamina) {
+async function attackMonster(mid, stamina) {
   const form = new FormData();
+
   if (isDungeon) {
     form.append("dgmid", mid);
     form.append("instance_id", instanceId);
@@ -10075,14 +10076,26 @@ const ATK_STORAGE_KEY = getAtkStorageKey();
     return false;
   }
 
-  // ✅ Update HP bar from server response
+  // ✅ Update HP bar if available
   if (data?.retaliation?.user_hp_after != null) {
     updateHpBar(data.retaliation.user_hp_after);
+
+    // 🚨 FAILSAFE: HP depleted
+    if (data.retaliation.user_hp_after <= 0) {
+      console.warn("[QoL] HP depleted — using potion");
+
+      const healed = await useFullHpPotion();
+      if (!healed) {
+        throw new Error("Out of HP and no potion available");
+      }
+
+      // Small delay to allow UI/server sync
+      await sleep(400);
+    }
   }
 
   return data.status === "success";
 }
-
   /* ===================== Init ===================== */
   function init(attempt = 0) {
     const cards = [...document.querySelectorAll(".monster-container .monster-card ")];
@@ -10385,6 +10398,53 @@ function initGuildDungeonQoL(attempt = 0) {
     const FILTER_STORAGE_KEY = `tm_qol_dungeon_filters_${instanceId}`;
 
   /* ===================== Helpers ===================== */
+
+    function getFullHpPotionInvId() {
+  const cards = document.querySelectorAll(".potion-card");
+  for (const card of cards) {
+    const nameEl = card.querySelector(".potion-name span");
+    if (!nameEl) continue;
+
+    if (nameEl.textContent.trim().toLowerCase() === "full hp potion") {
+      return card.dataset.invId;
+    }
+  }
+  return null;
+}
+
+    async function useFullHpPotion() {
+  const invId = getFullHpPotionInvId();
+  if (!invId) {
+    console.warn("[QoL] No Full HP Potion found.");
+    return false;
+  }
+
+  const form = new URLSearchParams();
+  form.append("inv_id", invId);
+
+  const res = await fetch("/user_heal_potion.php", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: form.toString()
+  });
+
+  if (!res.ok) return false;
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return false;
+  }
+
+  // Some responses don’t return HP, so we just trust success
+  console.log("[QoL] Full HP Potion used");
+  return true;
+}
+
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   function getDungeonMonsterName(card) {
@@ -10408,8 +10468,9 @@ function initGuildDungeonQoL(attempt = 0) {
     });
   }
 
- async function attackMonster(mid, stamina) {
+async function attackMonster(mid, stamina) {
   const form = new FormData();
+
   if (isDungeon) {
     form.append("dgmid", mid);
     form.append("instance_id", instanceId);
@@ -10441,14 +10502,26 @@ function initGuildDungeonQoL(attempt = 0) {
     return false;
   }
 
-  // ✅ Update HP bar from server response
+  // ✅ Update HP bar if available
   if (data?.retaliation?.user_hp_after != null) {
     updateHpBar(data.retaliation.user_hp_after);
+
+    // 🚨 FAILSAFE: HP depleted
+    if (data.retaliation.user_hp_after <= 0) {
+      console.warn("[QoL] HP depleted — using potion");
+
+      const healed = await useFullHpPotion();
+      if (!healed) {
+        throw new Error("Out of HP and no potion available");
+      }
+
+      // Small delay to allow UI/server sync
+      await sleep(400);
+    }
   }
 
   return data.status === "success";
 }
-
   /* ===================== Panel Target ===================== */
   const leftPanels = document.querySelectorAll(".grid > div:first-child .panel");
   const monstersPanel = leftPanels[1];
