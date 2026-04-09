@@ -9946,6 +9946,89 @@ document.head.appendChild(style);
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+    function getLargeStaminaPotionInvId() {
+  const cards = document.querySelectorAll(".potion-card");
+  for (const card of cards) {
+    const nameEl = card.querySelector(".potion-name span");
+    if (!nameEl) continue;
+
+    if (nameEl.textContent.trim().toLowerCase() === "large stamina potion") {
+      return card.dataset.invId;
+    }
+  }
+  return null;
+}
+
+async function useLargeStaminaPotion() {
+  const invId = getLargeStaminaPotionInvId();
+  if (!invId) {
+    console.warn("[QoL] No Large Stamina Potion found.");
+    return false;
+  }
+
+  const form = new URLSearchParams();
+  form.append("inv_id", invId);
+
+  const res = await fetch("/use_item.php", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: form.toString()
+  });
+
+  if (!res.ok) return false;
+
+  console.log("[QoL] Large Stamina Potion used");
+  return true;
+}
+
+    function getFullHpPotionInvId() {
+  const cards = document.querySelectorAll(".potion-card");
+  for (const card of cards) {
+    const nameEl = card.querySelector(".potion-name span");
+    if (!nameEl) continue;
+
+    if (nameEl.textContent.trim().toLowerCase() === "full hp potion") {
+      return card.dataset.invId;
+    }
+  }
+  return null;
+}
+
+    async function useFullHpPotion() {
+  const invId = getFullHpPotionInvId();
+  if (!invId) {
+    console.warn("[QoL] No Full HP Potion found.");
+    return false;
+  }
+
+  const form = new URLSearchParams();
+  form.append("inv_id", invId);
+
+  const res = await fetch("/user_heal_potion.php", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: form.toString()
+  });
+
+  if (!res.ok) return false;
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return false;
+  }
+
+  // Some responses don’t return HP, so we just trust success
+  console.log("[QoL] Full HP Potion used");
+  return true;
+}
 
        function updateHpBar(userHpAfter) {
   const wrapper = document.querySelector(".topbar-hp-wrapper");
@@ -9969,7 +10052,6 @@ document.head.appendChild(style);
   hpText.textContent =
     `💚 ${userHpAfter.toLocaleString()} / ${maxHp.toLocaleString()} HP`;
 }
-``
 
 
   function getUserId() {
@@ -10042,7 +10124,9 @@ const ATK_STORAGE_KEY = getAtkStorageKey();
     return txt.includes("successfully") || txt.includes("already");
   }
 
-async function attackMonster(mid, stamina) {
+let lastKnownStamina = null;
+
+async function attackMonster(mid, staminaCost, retry = false) {
   const form = new FormData();
 
   if (isDungeon) {
@@ -10053,13 +10137,13 @@ async function attackMonster(mid, stamina) {
   }
 
   const skillId =
-    stamina === 1 ? 0 :
-    stamina === 10 ? -1 :
-    stamina === 50 ? -2 :
-    stamina === 100 ? -3 : -4;
+    staminaCost === 1 ? 0 :
+    staminaCost === 10 ? -1 :
+    staminaCost === 50 ? -2 :
+    staminaCost === 100 ? -3 : -4;
 
   form.append("skill_id", skillId);
-  form.append("stamina_cost", stamina);
+  form.append("stamina_cost", staminaCost);
 
   const res = await fetch("damage.php", {
     method: "POST",
@@ -10067,20 +10151,37 @@ async function attackMonster(mid, stamina) {
     body: form
   });
 
-  if (!res.ok) return false;
-
-  let data;
+  let data = null;
   try {
     data = await res.json();
   } catch {
-    return false;
+    // no JSON = hard failure
+    throw new Error("Attack failed (no JSON response)");
   }
 
-  // ✅ Update HP bar if available
+  /* ===================== STAMINA ERROR HANDLING ===================== */
+  if (!res.ok && data?.message?.toLowerCase().includes("not enough stamina")) {
+    if (retry) {
+      throw new Error("Stamina potion failed or no potion left");
+    }
+
+    console.warn("[QoL] Server says: Not enough stamina — using potion");
+
+    const healed = await useLargeStaminaPotion();
+    if (!healed) {
+      throw new Error("Out of stamina and no potion available");
+    }
+
+    await sleep(400);
+
+    // 🔁 Retry the SAME attack once
+    return attackMonster(mid, staminaCost, true);
+  }
+
+  /* ===================== HP FAILSAFE ===================== */
   if (data?.retaliation?.user_hp_after != null) {
     updateHpBar(data.retaliation.user_hp_after);
 
-    // 🚨 FAILSAFE: HP depleted
     if (data.retaliation.user_hp_after <= 0) {
       console.warn("[QoL] HP depleted — using potion");
 
@@ -10089,12 +10190,21 @@ async function attackMonster(mid, stamina) {
         throw new Error("Out of HP and no potion available");
       }
 
-      // Small delay to allow UI/server sync
       await sleep(400);
     }
   }
 
-  return data.status === "success";
+  /* ===================== STAMINA TRACKING ===================== */
+  if (typeof data.stamina === "number") {
+    lastKnownStamina = data.stamina;
+    //updateStaminaBar(data.stamina);
+  }
+
+  if (data.status !== "success") {
+    throw new Error(data.message || "Attack failed");
+  }
+
+  return true;
 }
   /* ===================== Init ===================== */
   function init(attempt = 0) {
@@ -10399,52 +10509,6 @@ function initGuildDungeonQoL(attempt = 0) {
 
   /* ===================== Helpers ===================== */
 
-    function getFullHpPotionInvId() {
-  const cards = document.querySelectorAll(".potion-card");
-  for (const card of cards) {
-    const nameEl = card.querySelector(".potion-name span");
-    if (!nameEl) continue;
-
-    if (nameEl.textContent.trim().toLowerCase() === "full hp potion") {
-      return card.dataset.invId;
-    }
-  }
-  return null;
-}
-
-    async function useFullHpPotion() {
-  const invId = getFullHpPotionInvId();
-  if (!invId) {
-    console.warn("[QoL] No Full HP Potion found.");
-    return false;
-  }
-
-  const form = new URLSearchParams();
-  form.append("inv_id", invId);
-
-  const res = await fetch("/user_heal_potion.php", {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: form.toString()
-  });
-
-  if (!res.ok) return false;
-
-  let data;
-  try {
-    data = await res.json();
-  } catch {
-    return false;
-  }
-
-  // Some responses don’t return HP, so we just trust success
-  console.log("[QoL] Full HP Potion used");
-  return true;
-}
-
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   function getDungeonMonsterName(card) {
@@ -10468,7 +10532,9 @@ function initGuildDungeonQoL(attempt = 0) {
     });
   }
 
-async function attackMonster(mid, stamina) {
+let lastKnownStamina = null;
+
+async function attackMonster(mid, staminaCost, retry = false) {
   const form = new FormData();
 
   if (isDungeon) {
@@ -10479,13 +10545,13 @@ async function attackMonster(mid, stamina) {
   }
 
   const skillId =
-    stamina === 1 ? 0 :
-    stamina === 10 ? -1 :
-    stamina === 50 ? -2 :
-    stamina === 100 ? -3 : -4;
+    staminaCost === 1 ? 0 :
+    staminaCost === 10 ? -1 :
+    staminaCost === 50 ? -2 :
+    staminaCost === 100 ? -3 : -4;
 
   form.append("skill_id", skillId);
-  form.append("stamina_cost", stamina);
+  form.append("stamina_cost", staminaCost);
 
   const res = await fetch("damage.php", {
     method: "POST",
@@ -10493,20 +10559,37 @@ async function attackMonster(mid, stamina) {
     body: form
   });
 
-  if (!res.ok) return false;
-
-  let data;
+  let data = null;
   try {
     data = await res.json();
   } catch {
-    return false;
+    // no JSON = hard failure
+    throw new Error("Attack failed (no JSON response)");
   }
 
-  // ✅ Update HP bar if available
+  /* ===================== STAMINA ERROR HANDLING ===================== */
+  if (!res.ok && data?.message?.toLowerCase().includes("not enough stamina")) {
+    if (retry) {
+      throw new Error("Stamina potion failed or no potion left");
+    }
+
+    console.warn("[QoL] Server says: Not enough stamina — using potion");
+
+    const healed = await useLargeStaminaPotion();
+    if (!healed) {
+      throw new Error("Out of stamina and no potion available");
+    }
+
+    await sleep(400);
+
+    // 🔁 Retry the SAME attack once
+    return attackMonster(mid, staminaCost, true);
+  }
+
+  /* ===================== HP FAILSAFE ===================== */
   if (data?.retaliation?.user_hp_after != null) {
     updateHpBar(data.retaliation.user_hp_after);
 
-    // 🚨 FAILSAFE: HP depleted
     if (data.retaliation.user_hp_after <= 0) {
       console.warn("[QoL] HP depleted — using potion");
 
@@ -10515,12 +10598,21 @@ async function attackMonster(mid, stamina) {
         throw new Error("Out of HP and no potion available");
       }
 
-      // Small delay to allow UI/server sync
       await sleep(400);
     }
   }
 
-  return data.status === "success";
+  /* ===================== STAMINA TRACKING ===================== */
+  if (typeof data.stamina === "number") {
+    lastKnownStamina = data.stamina;
+    //updateStaminaBar(data.stamina);
+  }
+
+  if (data.status !== "success") {
+    throw new Error(data.message || "Attack failed");
+  }
+
+  return true;
 }
   /* ===================== Panel Target ===================== */
   const leftPanels = document.querySelectorAll(".grid > div:first-child .panel");
