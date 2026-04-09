@@ -8339,6 +8339,7 @@ function init() {
 
     applyStatusOrder();
     highlightSelfMarked();
+    copyRewardsToTop();
 
 }
     // Hide everything except matchTop + meta
@@ -8368,6 +8369,39 @@ function toggleMatch(match, collapse) {
     }
     waitForMatches();
 
+function copyRewardsToTop() {
+    document.querySelectorAll('.match').forEach(match => {
+
+        const rewardItems = match.querySelectorAll('.rewardItem');
+        if (!rewardItems.length) return;
+
+        const rewards = [];
+
+        rewardItems.forEach(item => {
+            const name = item.querySelector('.rewardName')?.textContent.trim();
+            const qty  = item.querySelector('.rewardQty')?.textContent.trim();
+            if (name && qty) rewards.push(`${name} ${qty}`);
+        });
+
+        if (!rewards.length) return;
+
+        // Create or reuse reward summary container
+        let rewardSummary = match.querySelector('.rewardSummary');
+        if (!rewardSummary) {
+            rewardSummary = document.createElement('div');
+            rewardSummary.className = 'rewardSummary';
+            rewardSummary.style.fontSize = '12px';
+            rewardSummary.style.opacity = '0.9';
+            rewardSummary.style.marginTop = '4px';
+
+            // Insert under title inside matchTop
+            const matchTop = match.querySelector('.meta');
+            matchTop.appendChild(rewardSummary);
+        }
+
+        rewardSummary.textContent = `Rewards: ${rewards.join(', ')}`;
+    });
+}
 
 function applyStatusOrder() {
     const orderMap = {
@@ -8618,7 +8652,9 @@ function applyStatusOrder() {
     window.mobs = {};          // PvE mob structure
     window.pvpWins = {};       // PvP wins
     window.armyKills = {};     // Army kills
+    window.pvpSigils = {};   // { playerName: sigilCount }
 
+    window.sigilsDone = false;
     window.pveDone = false;
     window.pvpDone = false;
     window.armyDone = false;
@@ -8714,7 +8750,8 @@ function applyStatusOrder() {
     // FINAL LEADERBOARD RENDERER
     // ======================================================================
     function buildMergedLeaderboard() {
-        if (!window.pveDone || !window.pvpDone || !window.armyDone) return;
+        if (!window.pveDone || !window.pvpDone || !window.armyDone || !window.sigilsDone) return;
+
 
         const aside = getAside();
         if (!aside) return;
@@ -8744,7 +8781,8 @@ function applyStatusOrder() {
                 name: norm,
                 pveDamage: total,
                 armyKills: window.armyKills[norm] || 0,
-                pvpWins: 0
+                pvpWins: 0,
+                sigils: window.pvpSigils[norm] || 0
             };
         }
 
@@ -8756,10 +8794,13 @@ function applyStatusOrder() {
                     name: norm,
                     pveDamage: 0,
                     armyKills: window.armyKills[norm] || 0,
-                    pvpWins: wins
+                    pvpWins: wins,
+                    sigils: window.pvpSigils[norm] || 0
+
                 };
             } else {
                 merged[norm].pvpWins = wins;
+                merged[norm].sigils = window.pvpSigils[norm] || 0;
             }
         }
 
@@ -8771,10 +8812,13 @@ function applyStatusOrder() {
                     name: norm,
                     pveDamage: 0,
                     armyKills: kills,
-                    pvpWins: 0
+                    pvpWins: 0,
+                    sigils: window.pvpSigils[norm] || 0
                 };
             } else {
                 merged[norm].armyKills = kills;
+                merged[norm].sigils = window.pvpSigils[norm] || 0;
+
             }
         }
 
@@ -8826,9 +8870,12 @@ card.style.cssText = `
 const text = document.createElement("div");
 text.innerHTML = `
     <strong>#${idx + 1} — ${p.name}</strong><br>
-    <small>${p.pveDamage.toLocaleString()} damage /
-           ${p.armyKills} army kills /
-           ${p.pvpWins} PvP wins</small>
+    <small>
+      ${p.pveDamage.toLocaleString()} damage /
+      ${p.armyKills} army kills /
+      ${p.pvpWins} PvP wins /
+      🏅 ${p.sigils} sigils
+    </small>
 `;
 
 card.appendChild(text);
@@ -8858,7 +8905,7 @@ listDiv.appendChild(card);
             window.players = cached.players;
             window.mobs = cached.mobs;
             window.pveDone = true;
-            buildMergedLeaderboard();
+            //buildMergedLeaderboard();
             return;
         }
 
@@ -8912,8 +8959,9 @@ listDiv.appendChild(card);
         const estimatedPvE = 4 + estimatedPvEMobs;
         const estimatedPvP = 3;
         const estimatedArmy = 3 + 4 + 4 + 1;
+        const estimatedSigils = 3;
 
-        window.__totalWorkUnits = estimatedPvE + estimatedPvP + estimatedArmy;
+        window.__totalWorkUnits = estimatedPvE + estimatedPvP + estimatedArmy+ estimatedSigils;
 
         function crawlMob() {
             if (mobQueue.length === 0) {
@@ -9084,6 +9132,68 @@ listDiv.appendChild(card);
         });
     }
 
+    function startSIGILS() {
+    const nodes = [7, 8, 9];
+    window.pvpSigils = {};
+    let completed = 0;
+
+    nodes.forEach(nodeId => {
+        const t0 = performance.now();
+
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: `/pvp_style_node.php?source=cube&instance_id=${instanceId}&node_id=${nodeId}`,
+
+            onload: res => {
+                recordRequestTime(performance.now() - t0);
+                window.__completedWorkUnits++;
+                updateProgress();
+
+                const doc = new DOMParser().parseFromString(res.responseText, "text/html");
+
+                doc.querySelectorAll(".match").forEach(match => {
+                    let sigils = 0;
+
+                    match.querySelectorAll(".rewardItem").forEach(item => {
+                        if (
+                            item.querySelector(".rewardName")?.textContent.trim() === "Crucible Sigil"
+                        ) {
+                            sigils = parseInt(
+                                item.querySelector(".rewardQty")?.textContent.replace(/\D/g, "") || "0",
+                                10
+                            );
+                        }
+                    });
+
+                    match.querySelectorAll(".slots .name").forEach(el => {
+                        const name = normalizeName(el.textContent);
+                        if (!name) return;
+
+                        window.pvpSigils[name] =
+                            (window.pvpSigils[name] || 0) + sigils;
+                    });
+                });
+
+                completed++;
+                if (completed >= nodes.length) {
+                    window.sigilsDone = true;
+                    buildMergedLeaderboard();
+                }
+            },
+
+            onerror: () => {
+                window.__completedWorkUnits++;
+                updateProgress();
+
+                completed++;
+                if (completed >= nodes.length) {
+                    window.sigilsDone = true;
+                    buildMergedLeaderboard();
+                }
+            }
+        });
+    });
+}
     // ======================================================================
     // ARMY CRAWLER (contributors mode)
     // ======================================================================
@@ -9211,6 +9321,7 @@ listDiv.appendChild(card);
     startPVE();
     startPVP();
     startARMY();
+    startSIGILS();
 
 })();
 
@@ -9757,17 +9868,6 @@ const style = document.createElement("style");
 })();
 
 //QoL Revamp
-// ==UserScript==
-// @name         Wave QoL – Monster Filter + Styled QoL Attacks (FINAL)
-// @namespace    wave-qol-stable
-// @version      0.9.0
-// @description  Custom dropdown + custom filters + QoL attacks (fully unified)
-// @match        https://demonicscans.org/active_wave.php*
-// @match        https://demonicscans.org/guild_dungeon_location.php*
-// @run-at       document-idle
-// @grant        none
-// ==/UserScript==
-
 (function () {
   "use strict";
 
