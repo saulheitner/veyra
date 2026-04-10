@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.15.2
+// @version      2.15.3
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -10200,9 +10200,17 @@ async function attackMonster(mid, staminaCost, retry = false) {
     //updateStaminaBar(data.stamina);
   }
 
-  if (data.status !== "success") {
-    throw new Error(data.message || "Attack failed");
+if (data.status !== "success") {
+  const msg = (data.message || "").toLowerCase();
+
+  // ✅ Soft-skip dead monsters
+  if (msg.includes("already dead")) {
+    console.warn(`[QoL] Skipping dead monster ${mid}`);
+    return false;
   }
+
+  throw new Error(data.message || "Attack failed");
+}
 
   return true;
 }
@@ -10609,9 +10617,17 @@ async function attackMonster(mid, staminaCost, retry = false) {
     //updateStaminaBar(data.stamina);
   }
 
-  if (data.status !== "success") {
-    throw new Error(data.message || "Attack failed");
+if (data.status !== "success") {
+  const msg = (data.message || "").toLowerCase();
+
+  // ✅ Soft-skip dead monsters (dungeon cleanup)
+  if (msg.includes("already dead")) {
+    console.warn(`[QoL] Skipping dead monster ${mid}`);
+    return false;
   }
+
+  throw new Error(data.message || "Attack failed");
+}
 
   return true;
 }
