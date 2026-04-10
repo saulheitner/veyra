@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.15.1
+// @version      2.15.2
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -10505,9 +10505,10 @@ function initGuildDungeonQoL(attempt = 0) {
 
     const ATK_STORAGE_KEY =
           `tm_qol_dungeon_atk_${instanceId}_loc${locationId}`;
-    const FILTER_STORAGE_KEY = `tm_qol_dungeon_filters_${instanceId}`;
+    const FILTER_STORAGE_KEY =
+          `tm_qol_dungeon_filters_${instanceId}_loc${locationId}`;
 
-  /* ===================== Helpers ===================== */
+    /* ===================== Helpers ===================== */
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
