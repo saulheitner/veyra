@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.15.3
+// @version      2.15.4
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -9870,11 +9870,25 @@ const style = document.createElement("style");
 //QoL Revamp
 (function () {
   "use strict";
+let QOL_ABORTED = false;
+if (document.getElementById("wave-addon-filter-panel")) {
+  console.log("[QoL] Wave Addon detected — aborting early.");
+  QOL_ABORTED = true;
+  return;
+}
 
- if (document.getElementById("wave-addon-filter-panel")) {
-    console.log("[QoL] Wave Addon detected — script aborted.");
-    return;
+const observer = new MutationObserver(() => {
+  if (document.getElementById("wave-addon-filter-panel")) {
+    console.log("[QoL] Wave Addon detected late — aborting QoL.");
+    QOL_ABORTED = true;
+    observer.disconnect();
   }
+});
+
+observer.observe(document.documentElement, {
+  childList: true,
+  subtree: true
+});
 
 const style = document.createElement("style");
 style.textContent = `
@@ -10216,6 +10230,9 @@ if (data.status !== "success") {
 }
   /* ===================== Init ===================== */
   function init(attempt = 0) {
+
+  if (QOL_ABORTED) return;
+
     const cards = [...document.querySelectorAll(".monster-container .monster-card ")];
     const fNameSel = document.querySelector("#fNameSel");
     const qolTop = document.querySelector(".qol-top");
@@ -10462,6 +10479,9 @@ wrap.style.height = "auto";
       btn.innerHTML = `⚡ Quick Join & Attack <span style="opacity:.8">(${stam})</span>`;
 
         btn.onclick = async () => {
+
+  if (QOL_ABORTED) return;
+
             if (!selectedMonsterIds.length) return;
             btn.disabled = true;
 
@@ -10497,6 +10517,8 @@ wrap.style.height = "auto";
 }
 
 function initGuildDungeonQoL(attempt = 0) {
+
+  if (QOL_ABORTED) return;
 
   if (!location.pathname.includes("guild_dungeon_location.php")) return;
 
@@ -10913,6 +10935,9 @@ function applyFilters() {
           b.textContent = "⏳ Working…";
 
           for (let i = 0; i < selectedMonsterIds.length; i++) {
+
+  if (QOL_ABORTED) break;
+
               statusBar.textContent = `⏳ Attacking ${i + 1}/${selectedMonsterIds.length}`;
               await joinDungeonMonster(selectedMonsterIds[i]);
               await sleep(150);
