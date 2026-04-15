@@ -400,6 +400,8 @@ window.addEventListener('load', () => {
     transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
 }
 
+
+
 .extract-btn:hover {
     transform: translateY(-1px);
     box-shadow:
@@ -483,6 +485,35 @@ window.addEventListener('load', () => {
     color: #fff;
     font-size: 20px;
     cursor: pointer;
+}
+.shadow-modal.error .shadow-box {
+    background:
+        radial-gradient(circle at top, rgba(120,40,40,.35), transparent 60%),
+        linear-gradient(180deg, #1a0f14, #0b0a12);
+    border: 1px solid rgba(255,90,90,.35);
+    box-shadow: 0 0 40px rgba(255,60,60,.25);
+}
+
+.shadow-tag {
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    font-weight: 700;
+    color: #ff6a6a;
+    margin-bottom: 6px;
+}
+
+.error-main {
+    margin: 10px 0;
+    font-size: 14px;
+}
+
+.error-flavor {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(0,0,0,.35);
+    font-size: 12px;
+    color: #c9c9c9;
 }
 
     .highlightSelfMark {
@@ -2217,24 +2248,35 @@ extractBtn.onclick = async (e) => {
     try {
         const res = await fetch(`/battle.php?id=${monsterId}`, {
             method: 'POST',
-            headers: {'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
             credentials: 'same-origin',
             body: 'action=extract_shadow'
         });
 
         const data = await res.json();
-        if (!data.ok) throw new Error(data.message);
 
+        // ❌ NO throw here
+        if (!data.ok) {
+            showExtractionErrorModal(data.message || 'Extraction failed.');
+            extractBtn.disabled = false;
+            extractBtn.__busy = false;
+            extractBtn.innerHTML = `<span class="icon">☠</span> Extraction`;
+            return;
+        }
+
+        // ✅ Success
         showShadowModal(data.shadow, data.message);
         extractBtn.innerHTML = `<span class="icon">✔</span> Extracted`;
+
     } catch (err) {
-        console.error(err);
+        console.error('Network / parsing error:', err);
+        showExtractionErrorModal('A network error occurred. Please try again.');
         extractBtn.disabled = false;
         extractBtn.__busy = false;
         extractBtn.innerHTML = `<span class="icon">☠</span> Extraction`;
-        alert('Shadow extraction failed.');
     }
 };
+
 
 
     btnWrap.append(claimBtn, extractBtn);
@@ -2402,6 +2444,33 @@ function showShadowModal(shadow, message) {
     `;
 
     document.body.appendChild(modal);
+    modal.querySelector('.shadow-close').onclick =
+    modal.querySelector('.shadow-backdrop').onclick = () => modal.remove();
+}
+
+function showExtractionErrorModal(message) {
+    const modal = document.createElement('div');
+    modal.className = 'shadow-modal error';
+
+    modal.innerHTML = `
+        <div class="shadow-backdrop"></div>
+        <div class="shadow-box error-box">
+            <button class="shadow-close">×</button>
+
+            <div class="shadow-tag">SHADOW REJECTION</div>
+            <h2>Extraction Failed</h2>
+
+            <p class="error-main">${message}</p>
+
+            <div class="error-flavor">
+                The darkness did not answer your call. Strengthen your extraction skill,
+                preserve your daily attempts, and try again on a valid corpse.
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
     modal.querySelector('.shadow-close').onclick =
     modal.querySelector('.shadow-backdrop').onclick = () => modal.remove();
 }
