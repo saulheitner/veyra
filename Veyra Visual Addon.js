@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.15.4
+// @version      2.16.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -90,6 +90,12 @@ function isExceptionPage() {
         {key: 'multiForge',       label: 'forge multiple items at a time'},
         {key: 'loot_summary',     label: 'Loot Summary module'},
         {key: 'dungeon_dmg_pills',label: 'Dungeon mobs — Damage dealt pill'},
+        {key: 'dungeon_pvp_match',label: 'Dungeon PvP — Match Collapser'},
+        {key: 'cube_dung_leaderb',label: 'Cube Dungeon — combined leaderboard'},
+        {key: 'army_damage_dealt',label: 'Shadow army — Damage dealt pill'},
+        {key: 'pvp_hp_bar',       label: 'PvP HP Bar'},
+        {key: 'qol_revamp',       label: 'Modified QoL Section'},
+
         // { key: 'membersInRed',         label: 'Highlight guild members in red' },
 
         // 🔒 These two are hidden unless Wave Enhanced Controls is detected
@@ -363,6 +369,121 @@ window.addEventListener('load', () => {
 
     const style = document.createElement('style');
     style.textContent = `
+.extract-btn {
+    all: unset;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 10px 16px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.2px;
+    color: #eaf3ff;
+
+    border-radius: 8px;
+    cursor: pointer;
+
+    background:
+        linear-gradient(180deg, rgba(35,64,86,.6), rgba(18,31,43,.9)),
+        radial-gradient(circle at top, rgba(90,160,255,.25), transparent 60%);
+    border: 1px solid rgba(120,180,255,.35);
+
+    box-shadow:
+        inset 0 0 0 1px rgba(255,255,255,.05),
+        0 0 12px rgba(80,140,255,.25);
+
+    transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+}
+
+.extract-btn:hover {
+    transform: translateY(-1px);
+    box-shadow:
+        inset 0 0 0 1px rgba(255,255,255,.08),
+        0 0 16px rgba(100,170,255,.45);
+}
+
+.extract-btn:active {
+    transform: translateY(0);
+    box-shadow: inset 0 0 6px rgba(0,0,0,.6);
+}
+
+.extract-btn[disabled] {
+    opacity: .55;
+    cursor: not-allowed;
+}
+
+.extract-btn .icon {
+    font-size: 13px;
+    opacity: .9;
+}
+.shadow-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.shadow-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,.75);
+}
+
+.shadow-box {
+    position: relative;
+    background: radial-gradient(circle at top, #1c1532, #0b0a14);
+    border-radius: 14px;
+    padding: 24px;
+    color: #fff;
+    width: 420px;
+    box-shadow: 0 0 50px #6f4cff55;
+}
+
+.shadow-box h2 {
+    margin: 0 0 8px;
+}
+
+.shadow-rank {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #2c244a;
+    margin-bottom: 12px;
+}
+
+.shadow-body {
+    display: flex;
+    gap: 14px;
+}
+
+.shadow-body img {
+    width: 120px;
+    border-radius: 10px;
+}
+
+.shadow-stats div {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.shadow-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 20px;
+    cursor: pointer;
+}
 
     .highlightSelfMark {
       border: 2px solid gold;
@@ -2026,64 +2147,100 @@ function modMonsterCards() {
         .toLowerCase();
 
     // --- Replace Loot button with inline Claim button ---
-    const replaceLootButton = (card, monsterId) => {
-        // Find native loot button
-        const lootBtn = card.querySelector('button.join-btn');
-        if (!lootBtn) return;
-        if (lootBtn.__claimReplaced) return;
+const replaceLootButton = (card, monsterId) => {
+    const lootBtn = card.querySelector('button.join-btn');
+    if (!lootBtn || lootBtn.__claimReplaced) return;
 
-        // Disable navigation if wrapped in <a>
-        const anchor = lootBtn.closest('a');
-        if (anchor) anchor.removeAttribute('href');
+    const anchor = lootBtn.closest('a');
+    if (anchor) anchor.removeAttribute('href');
 
-        const claimBtn = document.createElement('button');
-        claimBtn.className = 'join-btn';
-        claimBtn.textContent = '🎁 Claim';
-        claimBtn.style.cursor = 'pointer';
-        claimBtn.__busy = false;
+    // Container so buttons stack vertically
+    const btnWrap = document.createElement('div');
+    btnWrap.style.display = 'flex';
+    btnWrap.style.flexDirection = 'column';
+    btnWrap.style.gap = '6px';
 
-        claimBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            if (claimBtn.__busy) return;
+    /* ======================
+       🎁 CLAIM BUTTON
+    ====================== */
+    const claimBtn = document.createElement('button');
+    claimBtn.className = 'join-btn';
+    claimBtn.textContent = '🎁 Claim';
+    claimBtn.__busy = false;
 
-            claimBtn.__busy = true;
-            claimBtn.disabled = true;
-            claimBtn.textContent = 'Claiming…';
+    claimBtn.onclick = async (e) => {
+        e.preventDefault();
+        if (claimBtn.__busy) return;
 
-            try {
-                const res = await fetch('/loot.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    credentials: 'same-origin',
-                    body: `monster_id=${encodeURIComponent(monsterId)}`
-                });
+        claimBtn.__busy = true;
+        claimBtn.disabled = true;
+        claimBtn.textContent = 'Claiming…';
 
-                const text = await res.text();
-                const ok = /success|claimed|looted/i.test(text);
-                const already = /already\s+claimed/i.test(text);
+        try {
+            const res = await fetch('/loot.php', {
+                method: 'POST',
+                headers: {'Content-Type':'application/x-www-form-urlencoded'},
+                credentials: 'same-origin',
+                body: `monster_id=${encodeURIComponent(monsterId)}`
+            });
 
-                if (ok || already) {
-                    claimBtn.textContent = '✅ Claimed';
-                    claimBtn.disabled = true;
-
-                    // Optional: visually mark card as looted
-                    card.classList.add('looted');
-                } else {
-                    throw new Error(text);
-                }
-            } catch (err) {
-                console.error('Loot failed', err);
-                claimBtn.textContent = '🎁 Claim';
-                claimBtn.disabled = false;
-                claimBtn.__busy = false;
-                alert('Loot failed. Try again.');
+            const text = await res.text();
+            if (/success|claimed|looted/i.test(text)) {
+                claimBtn.textContent = '✅ Claimed';
+            } else {
+                throw new Error(text);
             }
-        });
-
-        lootBtn.replaceWith(claimBtn);
-        claimBtn.__claimReplaced = true;
+        } catch (err) {
+            alert('Loot failed.');
+            claimBtn.textContent = '🎁 Claim';
+            claimBtn.disabled = false;
+            claimBtn.__busy = false;
+        }
     };
 
+    /* ======================
+       🜂 EXTRACT SHADOW BUTTON
+    ====================== */
+   const extractBtn = document.createElement('button');
+extractBtn.className = 'extract-btn';
+extractBtn.innerHTML = `<span class="icon">☠</span> Extraction`;
+extractBtn.__busy = false;
+
+extractBtn.onclick = async (e) => {
+    e.preventDefault();
+    if (extractBtn.__busy) return;
+
+    extractBtn.__busy = true;
+    extractBtn.disabled = true;
+    extractBtn.innerHTML = `<span class="icon">⏳</span> Extracting`;
+
+    try {
+        const res = await fetch(`/battle.php?id=${monsterId}`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},
+            credentials: 'same-origin',
+            body: 'action=extract_shadow'
+        });
+
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.message);
+
+        showShadowModal(data.shadow, data.message);
+        extractBtn.innerHTML = `<span class="icon">✔</span> Extracted`;
+    } catch (err) {
+        console.error(err);
+        extractBtn.disabled = false;
+        extractBtn.__busy = false;
+        extractBtn.innerHTML = `<span class="icon">☠</span> Extraction`;
+        alert('Shadow extraction failed.');
+    }
+};
+
+
+    btnWrap.append(claimBtn, extractBtn);
+    lootBtn.replaceWith(btnWrap);
+    lootBtn.__claimReplaced = true;
+};
     // --- Read level from local DOM (NO FETCH) ---
     const lvlText = document.querySelector('.gtb-level')?.textContent || ''; // e.g., "LV 1054"
     const lvlVal = parseNumeric(lvlText); // → 1054
@@ -2212,6 +2369,41 @@ function modMonsterCards() {
 
 
 
+}
+
+function showShadowModal(shadow, message) {
+    const modal = document.createElement('div');
+    modal.className = 'shadow-modal';
+    modal.innerHTML = `
+        <div class="shadow-backdrop"></div>
+        <div class="shadow-box">
+            <button class="shadow-close">×</button>
+
+            <h2>Extraction Successful</h2>
+            <p>${message}</p>
+
+            <h3>${shadow.name}</h3>
+            <div class="shadow-rank">${shadow.rank}</div>
+
+            <div class="shadow-body">
+                <img src="${shadow.image}" alt="">
+                <div class="shadow-stats">
+                    <div><strong>Attack</strong><span>${shadow.attack}</span></div>
+                    <div><strong>Defense</strong><span>${shadow.defense}</span></div>
+                    <div><strong>Health</strong><span>${shadow.health.toLocaleString()}</span></div>
+                    <div><strong>Leads</strong><span>${shadow.lead_capacity}</span></div>
+                </div>
+            </div>
+
+            <div class="shadow-footer">
+                Extra copies: ${shadow.extra_copies_now}
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+    modal.querySelector('.shadow-close').onclick =
+    modal.querySelector('.shadow-backdrop').onclick = () => modal.remove();
 }
 
 ////insta join via picture click
@@ -3788,7 +3980,7 @@ function isExcludedFromLootPlan(card) {
             clearAutoState();
             setRunButtonState({
                 running: false,
-                text: 'loot to next level'
+                text: 'Loot to next level'
             });
             setStopButtonState({
                 visible: false
@@ -8308,7 +8500,7 @@ function escapeHtml(str) {
 
 //dungeon pvp match collapser
 (function() {
-
+if (!vv.isOn('dungeon_pvp_match')) return;
 
     // Run once DOM is ready
 function init() {
@@ -8643,6 +8835,7 @@ function applyStatusOrder() {
 
 //Cube dungeon Leaderboard
 (function () {
+    if (!vv.isOn('cube_dung_leaderb')) return;
     'use strict';
 
     if (!/guild_dungeon_cube\.php/.test(window.location.pathname)) return;
@@ -9550,6 +9743,7 @@ listDiv.appendChild(card);
 
 //Army damage dealt
 (function() {
+    if (!vv.isOn('army_damage_dealt')) return;
     'use strict';
 
     const url = "https://demonicscans.org/guild_dungeon_cube_army_action.php";
@@ -9693,6 +9887,7 @@ listDiv.appendChild(card);
 
 //PVP HP Bar
 (function () {
+    if (!vv.isOn('pvp_hp_bar')) return;
     'use strict';
 
     // Wait until hpText is present in DOM
@@ -9869,6 +10064,7 @@ const style = document.createElement("style");
 
 //QoL Revamp
 (function () {
+    if (!vv.isOn('qol_revamp')) return;
   "use strict";
 let QOL_ABORTED = false;
 if (document.getElementById("wave-addon-filter-panel")) {
@@ -9952,6 +10148,32 @@ style.textContent = `
     color:#cdd4ff;
   }
 
+@media (max-width: 640px) {
+
+  /* Stack dropdown + status vertically */
+  .qol-filter-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  /* Status filters go UNDER dropdown */
+  .qol-status-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+
+    border-radius: 6px;
+  }
+
+  /* Make status labels easier to tap */
+  .qol-status-filters label {
+    padding: 4px 6px;
+    font-size: 13px;
+  }
+}
+
+
 
 `;
 document.head.appendChild(style);
@@ -9961,275 +10183,311 @@ document.head.appendChild(style);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     function getLargeStaminaPotionInvId() {
-  const cards = document.querySelectorAll(".potion-card");
-  for (const card of cards) {
-    const nameEl = card.querySelector(".potion-name span");
-    if (!nameEl) continue;
+        const cards = document.querySelectorAll(".potion-card");
+        for (const card of cards) {
+            const nameEl = card.querySelector(".potion-name span");
+            if (!nameEl) continue;
 
-    if (nameEl.textContent.trim().toLowerCase() === "large stamina potion") {
-      return card.dataset.invId;
+            if (nameEl.textContent.trim().toLowerCase() === "large stamina potion") {
+                return card.dataset.invId;
+            }
+        }
+        return null;
     }
-  }
-  return null;
-}
 
-async function useLargeStaminaPotion() {
-  const invId = getLargeStaminaPotionInvId();
-  if (!invId) {
-    console.warn("[QoL] No Large Stamina Potion found.");
-    return false;
-  }
+    async function useLargeStaminaPotion() {
+        const invId = getLargeStaminaPotionInvId();
+        if (!invId) {
+            console.warn("[QoL] No Large Stamina Potion found.");
+            return false;
+        }
 
-  const form = new URLSearchParams();
-  form.append("inv_id", invId);
+        const form = new URLSearchParams();
+        form.append("inv_id", invId);
 
-  const res = await fetch("/use_item.php", {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: form.toString()
-  });
+        const res = await fetch("/use_item.php", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: form.toString()
+        });
 
-  if (!res.ok) return false;
+        if (!res.ok) return false;
 
-  console.log("[QoL] Large Stamina Potion used");
-  return true;
-}
+        console.log("[QoL] Large Stamina Potion used");
+        return true;
+    }
 
     function getFullHpPotionInvId() {
-  const cards = document.querySelectorAll(".potion-card");
-  for (const card of cards) {
-    const nameEl = card.querySelector(".potion-name span");
-    if (!nameEl) continue;
+        const cards = document.querySelectorAll(".potion-card");
+        for (const card of cards) {
+            const nameEl = card.querySelector(".potion-name span");
+            if (!nameEl) continue;
 
-    if (nameEl.textContent.trim().toLowerCase() === "full hp potion") {
-      return card.dataset.invId;
+            if (nameEl.textContent.trim().toLowerCase() === "full hp potion") {
+                return card.dataset.invId;
+            }
+        }
+        return null;
     }
-  }
-  return null;
-}
 
     async function useFullHpPotion() {
-  const invId = getFullHpPotionInvId();
-  if (!invId) {
-    console.warn("[QoL] No Full HP Potion found.");
-    return false;
-  }
+        const invId = getFullHpPotionInvId();
+        if (!invId) {
+            console.warn("[QoL] No Full HP Potion found.");
+            return false;
+        }
 
-  const form = new URLSearchParams();
-  form.append("inv_id", invId);
+        const form = new URLSearchParams();
+        form.append("inv_id", invId);
 
-  const res = await fetch("/user_heal_potion.php", {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: form.toString()
-  });
+        const res = await fetch("/user_heal_potion.php", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: form.toString()
+        });
 
-  if (!res.ok) return false;
+        if (!res.ok) return false;
 
-  let data;
-  try {
-    data = await res.json();
-  } catch {
-    return false;
-  }
+        let data;
+        try {
+            data = await res.json();
+        } catch {
+            return false;
+        }
 
-  // Some responses don’t return HP, so we just trust success
-  console.log("[QoL] Full HP Potion used");
-  return true;
-}
-
-       function updateHpBar(userHpAfter) {
-  const wrapper = document.querySelector(".topbar-hp-wrapper");
-  if (!wrapper) return;
-
-  const hpText = wrapper.querySelector(".hp-text");
-  const hpFill = wrapper.querySelector(".res-fill.stamina");
-
-  if (!hpText || !hpFill) return;
-
-  // Extract max HP from text: "💚 51,077 / 570,000 HP"
-  const match = hpText.textContent.match(/\/\s*([\d,]+)\s*HP/i);
-  if (!match) return;
-
-  const maxHp = parseInt(match[1].replace(/,/g, ""), 10);
-  if (!maxHp || maxHp <= 0) return;
-
-  const percent = Math.max(0, Math.min(100, (userHpAfter / maxHp) * 100));
-
-  hpFill.style.width = percent.toFixed(2) + "%";
-  hpText.textContent =
-    `💚 ${userHpAfter.toLocaleString()} / ${maxHp.toLocaleString()} HP`;
-}
-
-
-  function getUserId() {
-    const m = document.cookie.match(/(?:^|;\s*)demon=(\d+)/);
-    return m ? m[1] : null;
-  }
-
-  function getWaveStorageKey() {
-    try {
-      const url = new URL(location.href);
-      const page = url.pathname.replace(/^\/+/, "").replace(/\.php$/, "");
-      const wave = url.searchParams.get("wave") || "nowave";
-      const gate = url.searchParams.get("gate");
-      const event = url.searchParams.get("event");
-      const scope = gate ? `gate${gate}` : event ? `event${event}` : "default";
-      return `tm_monster_filter_${page}_wave${wave}_${scope}`;
-    } catch {
-      return "tm_monster_filter_fallback";
+        // Some responses don’t return HP, so we just trust success
+        console.log("[QoL] Full HP Potion used");
+        return true;
     }
-  }
 
-  const STORAGE_KEY = getWaveStorageKey();
-  const STATUS_STORAGE_KEY = STORAGE_KEY + "_status";
-  const isDungeon = location.pathname.includes("guild_dungeon_location.php");
-  const instanceId = isDungeon
+    function updateHpBar(userHpAfter) {
+        const wrapper = document.querySelector(".topbar-hp-wrapper");
+        if (!wrapper) return;
+
+        const hpText = wrapper.querySelector(".hp-text");
+        const hpFill = wrapper.querySelector(".res-fill.stamina");
+
+        if (!hpText || !hpFill) return;
+
+        // Extract max HP from text: "💚 51,077 / 570,000 HP"
+        const match = hpText.textContent.match(/\/\s*([\d,]+)\s*HP/i);
+        if (!match) return;
+
+        const maxHp = parseInt(match[1].replace(/,/g, ""), 10);
+        if (!maxHp || maxHp <= 0) return;
+
+        const percent = Math.max(0, Math.min(100, (userHpAfter / maxHp) * 100));
+
+        hpFill.style.width = percent.toFixed(2) + "%";
+        hpText.textContent =
+            `💚 ${userHpAfter.toLocaleString()} / ${maxHp.toLocaleString()} HP`;
+    }
+
+    function getMonsterName(card) {
+        return (card.dataset.name || "").toLowerCase();
+    }
+
+    function getMonsterHp(card) {
+  const hpValueEl = card.querySelector(
+    '.stat-row .stat-label'
+  )?.parentElement.querySelector('.stat-value');
+
+  if (!hpValueEl) return null;
+
+  // Example text: "45,017,289 / 100,000,000"
+  const text = hpValueEl.textContent.replace(/\s+/g, " ").trim();
+  const match = text.match(/([\d,]+)\s*\/\s*([\d,]+)/);
+
+  if (!match) return null;
+
+  return {
+    current: parseInt(match[1].replace(/,/g, ""), 10),
+    max: parseInt(match[2].replace(/,/g, ""), 10)
+  };
+}
+
+    function getUserId() {
+        const m = document.cookie.match(/(?:^|;\s*)demon=(\d+)/);
+        return m ? m[1] : null;
+    }
+
+    function getWaveStorageKey() {
+        try {
+            const url = new URL(location.href);
+            const page = url.pathname.replace(/^\/+/, "").replace(/\.php$/, "");
+            const wave = url.searchParams.get("wave") || "nowave";
+            const gate = url.searchParams.get("gate");
+            const event = url.searchParams.get("event");
+            const scope = gate ? `gate${gate}` : event ? `event${event}` : "default";
+            return `tm_monster_filter_${page}_wave${wave}_${scope}`;
+        } catch {
+            return "tm_monster_filter_fallback";
+        }
+    }
+
+    const STORAGE_KEY = getWaveStorageKey();
+    const STATUS_STORAGE_KEY = STORAGE_KEY + "_status";
+    const isDungeon = location.pathname.includes("guild_dungeon_location.php");
+    const instanceId = isDungeon
     ? new URL(location.href).searchParams.get("instance_id")
     : null;
-function getAtkStorageKey() {
-  try {
-    const url = new URL(location.href);
-    const page = url.pathname.replace(/^\/+/, "").replace(/\.php$/, "");
-    const wave = url.searchParams.get("wave") || "nowave";
-    const gate = url.searchParams.get("gate");
-    const event = url.searchParams.get("event");
-    const scope = gate ? `gate${gate}` : event ? `event${event}` : "default";
-    return `tm_qol_atklist_${page}_wave${wave}_${scope}`;
-  } catch {
-    return "tm_qol_atklist_fallback";
+    function getAtkStorageKey() {
+        try {
+            const url = new URL(location.href);
+            const page = url.pathname.replace(/^\/+/, "").replace(/\.php$/, "");
+            const wave = url.searchParams.get("wave") || "nowave";
+            const gate = url.searchParams.get("gate");
+            const event = url.searchParams.get("event");
+            const scope = gate ? `gate${gate}` : event ? `event${event}` : "default";
+            return `tm_qol_atklist_${page}_wave${wave}_${scope}`;
+        } catch {
+            return "tm_qol_atklist_fallback";
+        }
+    }
+
+    const ATK_STORAGE_KEY = getAtkStorageKey();
+
+    /* ===================== Join / Attack ===================== */
+    async function joinWaveMonster(mid) {
+        const userId = getUserId();
+        if (!userId) return false;
+        const form = new FormData();
+        form.append("monster_id", mid);
+        form.append("user_id", userId);
+        const res = await fetch("user_join_battle.php", {
+            method: "POST",
+            credentials: "include",
+            body: form
+        });
+        const txt = (await res.text()).toLowerCase();
+        return txt.includes("successfully") || txt.includes("already");
+    }
+
+    async function joinDungeonMonster(mid) {
+        const form = new FormData();
+        form.append("dgmid", mid);
+        form.append("instance_id", instanceId);
+        const res = await fetch("dungeon_join_battle.php", {
+            method: "POST",
+            credentials: "include",
+            body: form
+        });
+        const txt = (await res.text()).toLowerCase();
+        return txt.includes("successfully") || txt.includes("already");
+    }
+
+    let lastKnownStamina = null;
+
+    async function attackMonster(mid, staminaCost, retry = false) {
+        const form = new FormData();
+
+        if (isDungeon) {
+            form.append("dgmid", mid);
+            form.append("instance_id", instanceId);
+        } else {
+            form.append("monster_id", mid);
+        }
+
+        const skillId =
+              staminaCost === 1 ? 0 :
+        staminaCost === 10 ? -1 :
+        staminaCost === 50 ? -2 :
+        staminaCost === 100 ? -3 : -4;
+
+        form.append("skill_id", skillId);
+        form.append("stamina_cost", staminaCost);
+
+        const res = await fetch("damage.php", {
+            method: "POST",
+            credentials: "include",
+            body: form
+        });
+
+        // ✅ Handle server / edge failures FIRST
+if (!res.ok) {
+  // 429: rate limiting
+  if (res.status === 429) {
+    throw new Error("RATE_LIMIT");
+  }
+
+  // 520 / 502 / 503 / 504: server hiccup
+  if (res.status >= 500) {
+    console.warn(`[QoL] Server error ${res.status} — temporary failure`);
+    throw new Error("SERVER_OVERLOAD");
   }
 }
 
-const ATK_STORAGE_KEY = getAtkStorageKey();
-
-  /* ===================== Join / Attack ===================== */
-  async function joinWaveMonster(mid) {
-    const userId = getUserId();
-    if (!userId) return false;
-    const form = new FormData();
-    form.append("monster_id", mid);
-    form.append("user_id", userId);
-    const res = await fetch("user_join_battle.php", {
-      method: "POST",
-      credentials: "include",
-      body: form
-    });
-    const txt = (await res.text()).toLowerCase();
-    return txt.includes("successfully") || txt.includes("already");
-  }
-
-  async function joinDungeonMonster(mid) {
-    const form = new FormData();
-    form.append("dgmid", mid);
-    form.append("instance_id", instanceId);
-    const res = await fetch("dungeon_join_battle.php", {
-      method: "POST",
-      credentials: "include",
-      body: form
-    });
-    const txt = (await res.text()).toLowerCase();
-    return txt.includes("successfully") || txt.includes("already");
-  }
-
-let lastKnownStamina = null;
-
-async function attackMonster(mid, staminaCost, retry = false) {
-  const form = new FormData();
-
-  if (isDungeon) {
-    form.append("dgmid", mid);
-    form.append("instance_id", instanceId);
-  } else {
-    form.append("monster_id", mid);
-  }
-
-  const skillId =
-    staminaCost === 1 ? 0 :
-    staminaCost === 10 ? -1 :
-    staminaCost === 50 ? -2 :
-    staminaCost === 100 ? -3 : -4;
-
-  form.append("skill_id", skillId);
-  form.append("stamina_cost", staminaCost);
-
-  const res = await fetch("damage.php", {
-    method: "POST",
-    credentials: "include",
-    body: form
-  });
-
-  let data = null;
-  try {
-    data = await res.json();
-  } catch {
-    // no JSON = hard failure
-    throw new Error("Attack failed (no JSON response)");
-  }
-
-  /* ===================== STAMINA ERROR HANDLING ===================== */
-  if (!res.ok && data?.message?.toLowerCase().includes("not enough stamina")) {
-    if (retry) {
-      throw new Error("Stamina potion failed or no potion left");
-    }
-
-    console.warn("[QoL] Server says: Not enough stamina — using potion");
-
-    const healed = await useLargeStaminaPotion();
-    if (!healed) {
-      throw new Error("Out of stamina and no potion available");
-    }
-
-    await sleep(400);
-
-    // 🔁 Retry the SAME attack once
-    return attackMonster(mid, staminaCost, true);
-  }
-
-  /* ===================== HP FAILSAFE ===================== */
-  if (data?.retaliation?.user_hp_after != null) {
-    updateHpBar(data.retaliation.user_hp_after);
-
-    if (data.retaliation.user_hp_after <= 0) {
-      console.warn("[QoL] HP depleted — using potion");
-
-      const healed = await useFullHpPotion();
-      if (!healed) {
-        throw new Error("Out of HP and no potion available");
-      }
-
-      await sleep(400);
-    }
-  }
-
-  /* ===================== STAMINA TRACKING ===================== */
-  if (typeof data.stamina === "number") {
-    lastKnownStamina = data.stamina;
-    //updateStaminaBar(data.stamina);
-  }
-
-if (data.status !== "success") {
-  const msg = (data.message || "").toLowerCase();
-
-  // ✅ Soft-skip dead monsters
-  if (msg.includes("already dead")) {
-    console.warn(`[QoL] Skipping dead monster ${mid}`);
-    return false;
-  }
-
-  throw new Error(data.message || "Attack failed");
+// ✅ Only parse JSON after we know response is OK
+let data;
+try {
+  data = await res.json();
+} catch {
+  throw new Error("BAD_JSON");
 }
 
-  return true;
-}
-  /* ===================== Init ===================== */
-  function init(attempt = 0) {
+        /* ===================== STAMINA ERROR HANDLING ===================== */
+        if (!res.ok && data?.message?.toLowerCase().includes("not enough stamina")) {
+            if (retry) {
+                throw new Error("Stamina potion failed or no potion left");
+            }
+
+            console.warn("[QoL] Server says: Not enough stamina — using potion");
+
+            const healed = await useLargeStaminaPotion();
+            if (!healed) {
+                throw new Error("Out of stamina and no potion available");
+            }
+
+            await sleep(400);
+
+            // 🔁 Retry the SAME attack once
+            return attackMonster(mid, staminaCost, true);
+        }
+
+        /* ===================== HP FAILSAFE ===================== */
+        if (data?.retaliation?.user_hp_after != null) {
+            updateHpBar(data.retaliation.user_hp_after);
+
+            if (data.retaliation.user_hp_after <= 0) {
+                console.warn("[QoL] HP depleted — using potion");
+
+                const healed = await useFullHpPotion();
+                if (!healed) {
+                    throw new Error("Out of HP and no potion available");
+                }
+
+                await sleep(400);
+            }
+        }
+
+        /* ===================== STAMINA TRACKING ===================== */
+        if (typeof data.stamina === "number") {
+            lastKnownStamina = data.stamina;
+            //updateStaminaBar(data.stamina);
+        }
+
+        if (data.status !== "success") {
+            const msg = (data.message || "").toLowerCase();
+
+            // ✅ Soft-skip dead monsters
+            if (msg.includes("already dead")) {
+                console.warn(`[QoL] Skipping dead monster ${mid}`);
+                return false;
+            }
+
+            throw new Error(data.message || "Attack failed");
+        }
+
+        return true;
+    }
+    /* ===================== Init ===================== */
+    function init(attempt = 0) {
 
   if (QOL_ABORTED) return;
 
@@ -10270,7 +10528,7 @@ if (data.status !== "success") {
         style="background:#171c2f;border:1px solid #303a60;
         padding:2px 6px;border-radius:12px;
         font-size:12px;color:#8aa2ff;">0 selected</span>
-      <span style="font-size:12px;">⏷</span>
+        <span style="font-size:12px;">⏷</span>
     `;
     dropBtn.style.cssText =
       "padding:8px 14px;background:#1e2235;color:#cdd4ff;" +
@@ -10309,7 +10567,7 @@ if (data.status !== "success") {
 
     panel.appendChild(list);
     wrapper.append(dropBtn, panel);
-    fNameSel.after(wrapper);
+    //fNameSel.after(wrapper);
 
     dropBtn.onclick = e => {
       e.stopPropagation();
@@ -10323,12 +10581,18 @@ panel.addEventListener("mouseleave", () => {
   //dropdownOpen = false;
 });
 
-
+        const filterRow = document.createElement("div");
+        filterRow.className = "qol-filter-row";
+        filterRow.style.cssText = `
+  display:flex;
+  align-items:flex-start;
+  gap:16px;
+`;
     /* ===================== Custom Status Filters ===================== */
     const statusFilters = document.createElement("div");
     statusFilters.style.cssText =
       "display:flex;gap:16px;margin-top:8px;color:#cdd4ff;font-size:13px;";
-
+statusFilters.className = "qol-status-filters";
     function makeStatus(label, key, def) {
       const l = document.createElement("label");
       l.style.cssText = "display:flex;gap:6px;cursor:pointer;";
@@ -10354,7 +10618,30 @@ panel.addEventListener("mouseleave", () => {
       makeStatus("CAP not reached", "cap", false)
     );
 
-    wrapper.after(statusFilters);
+   // wrapper.after(statusFilters);
+filterRow.append(wrapper, statusFilters);
+fNameSel.after(filterRow);
+
+        const SORT_STORAGE_KEY = STORAGE_KEY + "_sort";
+
+const sortSelect = document.createElement("select");
+sortSelect.className = "qol-btn secondary";
+sortSelect.style.minWidth = "180px";
+sortSelect.innerHTML = `
+  <option value="name">Sort: Name (A–Z)</option>
+  <option value="hpDesc">Sort: HP (High → Low)</option>
+  <option value="hpAsc">Sort: HP (Low → High)</option>
+`;
+
+sortSelect.value =
+  localStorage.getItem(SORT_STORAGE_KEY) || "name";
+
+sortSelect.onchange = () => {
+  localStorage.setItem(SORT_STORAGE_KEY, sortSelect.value);
+  applySort();
+};
+
+filterRow.appendChild(sortSelect);
 
     /* ===================== Unified Filter ===================== */
     function applyAllFilters() {
@@ -10377,7 +10664,45 @@ panel.addEventListener("mouseleave", () => {
         card.style.display =
           passName && passJoin && passCap ? "" : "none";
       });
+        applySort();
     }
+
+    function applySort() {
+  const mode = sortSelect.value;
+
+  const visibleCards = cards
+    .filter(c => c.style.display !== "none");
+
+  visibleCards.sort((a, b) => {
+    if (mode === "name") {
+      return getMonsterName(a)
+        .localeCompare(getMonsterName(b));
+    }
+
+    const hpA = getMonsterHp(a);
+    const hpB = getMonsterHp(b);
+
+    const valA = hpA ? hpA.current : 0;
+    const valB = hpB ? hpB.current : 0;
+
+    if (mode === "hpDesc") {
+      return valB - valA;
+    }
+
+    if (mode === "hpAsc") {
+      return valA - valB;
+    }
+
+    return 0;
+  });
+
+  // Re-append in sorted order
+  const parent = visibleCards[0]?.parentNode;
+  if (!parent) return;
+
+  visibleCards.forEach(card => parent.appendChild(card));
+}
+
 
     btnSelectAll.onclick = () => {
       list.querySelectorAll("input").forEach(cb => cb.checked = true);
@@ -10492,7 +10817,7 @@ wrap.style.height = "auto";
                 isDungeon ? await joinDungeonMonster(id) : await joinWaveMonster(id);
                 await sleep(150);
                 await attackMonster(id, stam);
-                await sleep(400);
+                await sleep(500);
             }
 
             statusBar.textContent = "✅ Done — refreshing…";
@@ -10536,7 +10861,7 @@ function initGuildDungeonQoL(attempt = 0) {
     const ATK_STORAGE_KEY =
           `tm_qol_dungeon_atk_${instanceId}_loc${locationId}`;
     const FILTER_STORAGE_KEY =
-          `tm_qol_dungeon_filters_${instanceId}_loc${locationId}`;
+          `tm_qol_dungeon_filters_loc${locationId}`;
 
     /* ===================== Helpers ===================== */
 
@@ -10590,13 +10915,27 @@ async function attackMonster(mid, staminaCost, retry = false) {
     body: form
   });
 
-  let data = null;
-  try {
-    data = await res.json();
-  } catch {
-    // no JSON = hard failure
-    throw new Error("Attack failed (no JSON response)");
+// ✅ Handle server / edge failures FIRST
+if (!res.ok) {
+  // 429: rate limiting
+  if (res.status === 429) {
+    throw new Error("RATE_LIMIT");
   }
+
+  // 520 / 502 / 503 / 504: server hiccup
+  if (res.status >= 500) {
+    console.warn(`[QoL] Server error ${res.status} — temporary failure`);
+    throw new Error("SERVER_OVERLOAD");
+  }
+}
+
+// ✅ Only parse JSON after we know response is OK
+let data;
+try {
+  data = await res.json();
+} catch {
+  throw new Error("BAD_JSON");
+}
 
   /* ===================== STAMINA ERROR HANDLING ===================== */
   if (!res.ok && data?.message?.toLowerCase().includes("not enough stamina")) {
@@ -10702,7 +11041,8 @@ if (data.status !== "success") {
 
   const filterState = JSON.parse(
     localStorage.getItem(FILTER_STORAGE_KEY) ||
-    JSON.stringify({ joined: true, unjoined: true, cap: false, names: [] })
+    JSON.stringify({ joined: true, unjoined: true, hideDead: true, names: [] })
+
   );
 
   /* ===================== Dropdown ===================== */
@@ -10743,19 +11083,41 @@ if (data.status !== "success") {
     z-index:5;
   `;
 
-  const names = [...new Set(cards.map(c => c.dataset.name).filter(Boolean))];
+    const normalizeName = name =>
+  name.trim().toLowerCase();
 
-  names.forEach(name => {
-    const lbl = document.createElement("label");
-    lbl.style.cssText = "display:flex;gap:6px;color:#cdd4ff;font-size:13px;";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.value = name;
-    cb.checked = filterState.names.includes(name);
-    cb.onchange = applyFilters;
-    lbl.append(cb, name.replace(/\b\w/g, ch => ch.toUpperCase()));
-    panel.appendChild(lbl);
-  });
+const nameSet = new Map();
+
+cards.forEach(card => {
+  if (!card.dataset.name) return;
+
+  const raw = card.dataset.name;
+  const key = normalizeName(raw);
+
+  if (!nameSet.has(key)) {
+    nameSet.set(key, {
+      key,
+      label: raw.replace(/\b\w/g, c => c.toUpperCase())
+    });
+  }
+});
+
+const names = [...nameSet.values()];
+names.forEach(({ key, label }) => {
+  const lbl = document.createElement("label");
+  lbl.style.cssText =
+    "display:flex;gap:6px;color:#cdd4ff;font-size:13px;";
+
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.value = key; // ✅ normalized string
+  cb.checked = filterState.names.includes(key);
+  cb.onchange = applyFilters;
+
+  lbl.append(cb, label);
+  panel.appendChild(lbl);
+});
+
 
   let dropdownOpen = false;
 
@@ -10776,12 +11138,26 @@ if (data.status !== "success") {
 
    /* ===================== Status Filters ===================== */
   const statusFilters = document.createElement("div");
-  statusFilters.style.cssText =
-    "display:flex;gap:16px;align-items:center;flex-wrap:wrap;";
+
+statusFilters.style.cssText = `
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px 12px;
+  align-items:center;
+  max-width:100%;
+`;
+
 
   function makeStatus(label, key) {
     const l = document.createElement("label");
-    l.style.cssText = "display:flex;gap:6px;cursor:pointer;white-space:nowrap;";
+    l.style.cssText = `
+  display:flex;
+  gap:6px;
+  cursor:pointer;
+  white-space:normal;
+  align-items:center;
+`;
+
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = filterState[key];
@@ -10796,8 +11172,7 @@ if (data.status !== "success") {
   statusFilters.append(
     makeStatus("Joined", "joined"),
     makeStatus("Unjoined", "unjoined"),
-    makeStatus("CAP not reached", "cap")
-  );
+    makeStatus("Hide dead monsters", "hideDead")  );
 
   filterRow.appendChild(statusFilters);
 
@@ -10837,6 +11212,15 @@ if (data.status !== "success") {
   return { joined: false, unjoined: true };
 }
 
+    function isDeadMonster(card) {
+        // Fast path: class-based marker
+        if (card.classList.contains("dead")) return true;
+
+        // Fallback: pill text
+        return [...card.querySelectorAll(".pill")]
+            .some(p => p.textContent.trim().toLowerCase() === "dead");
+    }
+
 function applyFilters() {
   filterState.names = [...panel.querySelectorAll("input:checked")]
     .map(cb => cb.value);
@@ -10847,20 +11231,21 @@ function applyFilters() {
     `${filterState.names.length} selected`;
 
   cards.forEach(card => {
-    const name = card.dataset.name || "";
+    const name = normalizeName(card.dataset.name || "");
 
     const { joined, unjoined } = getDungeonJoinState(card);
 
-    const capOk =
-      !filterState.cap ||
-      !card.innerText.toLowerCase().includes("cap reached");
+
+    const deadOk =
+            !filterState.hideDead || !isDeadMonster(card);
+
 
     const pass =
-      (filterState.names.length > 0 &&
-       filterState.names.includes(name)) &&
-      ((filterState.joined && joined) ||
-       (filterState.unjoined && unjoined)) &&
-      capOk;
+            (filterState.names.length > 0 &&
+             filterState.names.includes(name)) &&
+            ((filterState.joined && joined) ||
+             (filterState.unjoined && unjoined)) &&
+            deadOk;
 
     card.style.display = pass ? "" : "none";
   });
@@ -10942,7 +11327,7 @@ function applyFilters() {
               await joinDungeonMonster(selectedMonsterIds[i]);
               await sleep(150);
               await attackMonster(selectedMonsterIds[i], stam);
-              await sleep(400);
+              await sleep(500);
           }
 
           statusBar.textContent = "✅ Done — refreshing…";
