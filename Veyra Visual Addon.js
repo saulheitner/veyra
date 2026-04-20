@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.16.2
+// @version      2.16.3
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -10407,9 +10407,22 @@ function notifyStatusAndReload(statusBar, message, delay = 2000) {
             return "tm_monster_filter_fallback";
         }
     }
+    // ===================== Wave Section (Alive / Dead) =====================
+function getWaveSection() {
+  const card = document.querySelector(".monster-card");
+  if (!card) return "dead";
 
-    const STORAGE_KEY = getWaveStorageKey();
-    const STATUS_STORAGE_KEY = STORAGE_KEY + "_status";
+  return card.dataset.dead === "1" ? "dead" : "alive";
+}
+
+const waveSection = getWaveSection();
+
+
+const BASE_STORAGE_KEY = getWaveStorageKey();
+
+// ✅ alive / dead separation
+const STORAGE_KEY = `${BASE_STORAGE_KEY}_${waveSection}`;
+const STATUS_STORAGE_KEY = `${BASE_STORAGE_KEY}_status_${waveSection}`;
     const isDungeon = location.pathname.includes("guild_dungeon_location.php");
     const instanceId = isDungeon
     ? new URL(location.href).searchParams.get("instance_id")
@@ -10600,7 +10613,11 @@ try {
           { joined: true, unjoined: true, cap: false },
           JSON.parse(localStorage.getItem(STATUS_STORAGE_KEY) || "{}")
       );
-
+// ===================== Dead Section Rule =====================
+if (waveSection === "dead") {
+  filterState.joined = true;      // ✅ force joined ON
+  filterState.unjoined = false;   // ✅ dead mobs are never unjoined
+}
 
     /* ===================== DROPDOWN ===================== */
     const wrapper = document.createElement("div");
@@ -10645,7 +10662,7 @@ try {
       const cb = document.createElement("input");
       cb.type = "checkbox";
       cb.value = name;
-      cb.onchange = applyAllFilters;
+      cb.onchange = () => applyAllFilters({ persist: true });
       lbl.append(cb, name.replace(/\b\w/g, x => x.toUpperCase()));
       list.appendChild(lbl);
     });
@@ -10747,11 +10764,18 @@ filterRow.appendChild(sortSelect);
 
 
     /* ===================== Unified Filter ===================== */
-    function applyAllFilters() {
-      const selected =
-        [...list.querySelectorAll("input:checked")].map(cb => cb.value);
+function applyAllFilters({ persist = true } = {}) {
+  const selected =
+    [...list.querySelectorAll("input:checked")].map(cb => cb.value);
 
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(selected));
+  // ✅ CRITICAL GUARD:
+  // do NOT overwrite saved filters when nothing is selected
+  if (persist && selected.length === 0) {
+    console.warn("[QoL] Empty selection — preserving stored filters");
+  } else if (persist) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(selected));
+  }
+
       document.getElementById("monster-count").textContent =
         `${selected.length} selected`;
 
@@ -10809,16 +10833,23 @@ filterRow.appendChild(sortSelect);
 
     btnSelectAll.onclick = () => {
       list.querySelectorAll("input").forEach(cb => cb.checked = true);
-      applyAllFilters();
+      applyAllFilters({ persist: true });
     };
     btnClear.onclick = () => {
       list.querySelectorAll("input").forEach(cb => cb.checked = false);
-      applyAllFilters();
+      applyAllFilters({ persist: true });
     };
 
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    list.querySelectorAll("input").forEach(cb => cb.checked = saved.includes(cb.value));
-    applyAllFilters();
+
+const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+
+list.querySelectorAll("input").forEach(cb => {
+  cb.checked = saved.includes(cb.value);
+});
+
+// ✅ restore only — do NOT persist
+applyAllFilters({ persist: false });
+
 
     /* ===================== Custom Monster Selection ===================== */
       let selectedMonsterIds = JSON.parse(
