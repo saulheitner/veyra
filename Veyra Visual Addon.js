@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.16.1
+// @version      2.16.2
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -7973,7 +7973,7 @@ function escapeHtml(str) {
     });
 })();
 
-//collpe button for the dude's panels
+//collapse button for the dude's panels
 (function() {
     if (!vv.isOn('autohunt_collapse')) return;
     'use strict';
@@ -10250,7 +10250,15 @@ document.head.appendChild(style);
 
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+function notifyStatusAndReload(statusBar, message, delay = 2000) {
+  if (statusBar) {
+    statusBar.textContent = message;
+  }
 
+  setTimeout(() => {
+    location.reload();
+  }, delay);
+}
     function getLargeStaminaPotionInvId() {
         const cards = document.querySelectorAll(".potion-card");
         for (const card of cards) {
@@ -10422,6 +10430,11 @@ document.head.appendChild(style);
 
     const ATK_STORAGE_KEY = getAtkStorageKey();
 
+    const AUTO_STAM_POTION_KEY = "tm_qol_auto_stamina_potion";
+
+let autoUseStaminaPotion =
+  JSON.parse(localStorage.getItem(AUTO_STAM_POTION_KEY) ?? "true");
+
     /* ===================== Join / Attack ===================== */
     async function joinWaveMonster(mid) {
         const userId = getUserId();
@@ -10501,23 +10514,26 @@ try {
 }
 
         /* ===================== STAMINA ERROR HANDLING ===================== */
-        if (!res.ok && data?.message?.toLowerCase().includes("not enough stamina")) {
-            if (retry) {
-                throw new Error("Stamina potion failed or no potion left");
-            }
+ if (!res.ok && data?.message?.toLowerCase().includes("not enough stamina")) {
+  if (!autoUseStaminaPotion) {
+    console.warn("[QoL] Not enough stamina — auto-use disabled");
+    throw new Error("Not enough stamina (auto-use disabled)");
+  }
 
-            console.warn("[QoL] Server says: Not enough stamina — using potion");
+  if (retry) {
+    throw new Error("Stamina potion failed or no potion left");
+  }
 
-            const healed = await useLargeStaminaPotion();
-            if (!healed) {
-                throw new Error("Out of stamina and no potion available");
-            }
+  console.warn("[QoL] Server says: Not enough stamina — using potion");
 
-            await sleep(400);
+  const healed = await useLargeStaminaPotion();
+  if (!healed) {
+    throw new Error("Out of stamina and no potion available");
+  }
 
-            // 🔁 Retry the SAME attack once
-            return attackMonster(mid, staminaCost, true);
-        }
+  await sleep(400);
+  return attackMonster(mid, staminaCost, true);
+}
 
         /* ===================== HP FAILSAFE ===================== */
         if (data?.retaliation?.user_hp_after != null) {
@@ -10712,6 +10728,24 @@ sortSelect.onchange = () => {
 
 filterRow.appendChild(sortSelect);
 
+
+        function makeToggle(label, valueGetter, valueSetter) {
+  const l = document.createElement("label");
+  l.style.cssText =
+    "display:flex;gap:6px;cursor:pointer;align-items:center;color:#cdd4ff;font-size:13px;";
+
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = valueGetter();
+
+  cb.onchange = () => valueSetter(cb.checked);
+
+  l.append(cb, label);
+  return l;
+}
+
+
+
     /* ===================== Unified Filter ===================== */
     function applyAllFilters() {
       const selected =
@@ -10858,7 +10892,39 @@ wrap.style.height = "auto";
       syncPicks();
     };
 
-    newWrap.append(btnSV, btnCLR);
+    const stamToggleWrap = document.createElement("label");
+stamToggleWrap.style.cssText = `
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin-left:12px;
+  padding:6px 10px;
+  background:#171c2f;
+  border:1px solid #303a60;
+  border-radius:6px;
+  color:#cdd4ff;
+  font-size:13px;
+  cursor:pointer;
+`;
+
+const stamToggle = document.createElement("input");
+stamToggle.type = "checkbox";
+stamToggle.checked = autoUseStaminaPotion;
+
+stamToggle.onchange = () => {
+  autoUseStaminaPotion = stamToggle.checked;
+  localStorage.setItem(
+    AUTO_STAM_POTION_KEY,
+    JSON.stringify(autoUseStaminaPotion)
+  );
+};
+
+stamToggleWrap.append(
+  stamToggle,
+  "Auto‑use stamina potions"
+);
+
+    newWrap.append(btnSV, btnCLR, stamToggleWrap);
 
     /* ===================== Attack Buttons ===================== */
     const attackWrap = document.createElement("div");
@@ -10885,8 +10951,26 @@ wrap.style.height = "auto";
                     `⏳ Attacking ${i + 1}/${selectedMonsterIds.length}`;
                 isDungeon ? await joinDungeonMonster(id) : await joinWaveMonster(id);
                 await sleep(150);
-                await attackMonster(id, stam);
-                await sleep(500);
+               try {
+  await attackMonster(id, stam);
+} catch (err) {
+  if (
+    err?.message?.includes("Not enough stamina") ||
+    err?.message?.includes("auto-use disabled")
+  ) {
+    notifyStatusAndReload(
+      statusBar,
+      "⚠️ Not enough stamina — auto‑use disabled",
+      2500
+    );
+    return; // ✅ stop processing further monsters
+  }
+
+  throw err; // preserve other errors
+}
+
+await sleep(500);
+
             }
 
             statusBar.textContent = "✅ Done — refreshing…";
@@ -11007,23 +11091,26 @@ try {
 }
 
   /* ===================== STAMINA ERROR HANDLING ===================== */
-  if (!res.ok && data?.message?.toLowerCase().includes("not enough stamina")) {
-    if (retry) {
-      throw new Error("Stamina potion failed or no potion left");
-    }
-
-    console.warn("[QoL] Server says: Not enough stamina — using potion");
-
-    const healed = await useLargeStaminaPotion();
-    if (!healed) {
-      throw new Error("Out of stamina and no potion available");
-    }
-
-    await sleep(400);
-
-    // 🔁 Retry the SAME attack once
-    return attackMonster(mid, staminaCost, true);
+if (!res.ok && data?.message?.toLowerCase().includes("not enough stamina")) {
+  if (!autoUseStaminaPotion) {
+    console.warn("[QoL] Not enough stamina — auto-use disabled");
+    throw new Error("Not enough stamina (auto-use disabled)");
   }
+
+  if (retry) {
+    throw new Error("Stamina potion failed or no potion left");
+  }
+
+  console.warn("[QoL] Server says: Not enough stamina — using potion");
+
+  const healed = await useLargeStaminaPotion();
+  if (!healed) {
+    throw new Error("Out of stamina and no potion available");
+  }
+
+  await sleep(400);
+  return attackMonster(mid, staminaCost, true);
+}
 
   /* ===================== HP FAILSAFE ===================== */
   if (data?.retaliation?.user_hp_after != null) {
@@ -11246,6 +11333,9 @@ statusFilters.style.cssText = `
   filterRow.appendChild(statusFilters);
 
   /* ===================== Status Bar (BOTTOM) ===================== */
+
+
+
   const statusBar = document.createElement("div");
   statusBar.style.cssText =
     "padding:6px 10px;background:#12162a;border:1px solid #303a60;" +
@@ -11367,8 +11457,39 @@ function applyFilters() {
     localStorage.removeItem(ATK_STORAGE_KEY);
     syncPicks();
   };
+const stamToggleWrap = document.createElement("label");
+stamToggleWrap.style.cssText = `
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin-left:0px;
+  padding:6px 10px;
+  background:#171c2f;
+  border:1px solid #303a60;
+  border-radius:6px;
+  color:#cdd4ff;
+  font-size:13px;
+  cursor:pointer;
+  width: 203px;
+`;
 
-  selectActions.append(btnSV, btnCLR);
+const stamToggle = document.createElement("input");
+stamToggle.type = "checkbox";
+stamToggle.checked = autoUseStaminaPotion;
+
+stamToggle.onchange = () => {
+  autoUseStaminaPotion = stamToggle.checked;
+  localStorage.setItem(
+    AUTO_STAM_POTION_KEY,
+    JSON.stringify(autoUseStaminaPotion)
+  );
+};
+
+stamToggleWrap.append(
+  stamToggle,
+  "Auto‑use stamina potions"
+);
+  selectActions.append(btnSV, btnCLR, stamToggleWrap);
 
   /* ===================== Attack Buttons ===================== */
   const atkWrap = document.createElement("div");
@@ -11395,8 +11516,25 @@ function applyFilters() {
               statusBar.textContent = `⏳ Attacking ${i + 1}/${selectedMonsterIds.length}`;
               await joinDungeonMonster(selectedMonsterIds[i]);
               await sleep(150);
-              await attackMonster(selectedMonsterIds[i], stam);
-              await sleep(500);
+            try {
+  await attackMonster(selectedMonsterIds[i], stam);
+} catch (err) {
+  if (
+    err?.message?.includes("Not enough stamina") ||
+    err?.message?.includes("auto-use disabled")
+  ) {
+    notifyStatusAndReload(
+      statusBar,
+      "⚠️ Not enough stamina — auto‑use disabled",
+      2500
+    );
+    return;
+  }
+
+  throw err;
+}
+
+await sleep(500);
           }
 
           statusBar.textContent = "✅ Done — refreshing…";
@@ -11572,3 +11710,782 @@ function applyFilters() {
     .then(res => waitForMenu(res.flat()))
     .catch(err => console.error('[BossTimers] Error:', err));
 })();
+
+//event npc auto dialog
+(function () {
+    if (!/event_page\.php$/.test(window.location.pathname)) return;
+  'use strict';
+
+  const CFG = {
+    tickMs: 170,
+    actionCooldownMs: 400,
+    npcSelector: '.eventNpc',
+    overlaySelector: '#dlgOverlay',
+    dialogueRootSelector: '.dlgBar',
+    choicesSelector: '#dlgChoices button',
+    actionsSelector: '#dlgActions .btn'
+  };
+
+  const state = {
+    running: false,
+    currentNpcKey: '',
+    currentNpcName: '',
+    lastProcessedKey: '',
+    lastProcessedName: '',
+    lastQuestGiverKey: '',
+    lastNpcCount: 0,
+    processedThisPass: new Set(),
+    passNo: 1,
+    finishMode: false,
+    success: false,
+    uiMinimized: false,
+    session: null,
+    lastActionAt: 0
+  };
+
+  const ui = {
+    root: null,
+    mini: null,
+    status: null,
+    runBtn: null,
+    resetBtn: null
+  };
+
+  const npcMemory = Object.create(null);
+  const elementIds = new WeakMap();
+  let nextElementId = 1;
+  let intervalId = null;
+  let observer = null;
+
+  function getElementId(el) {
+    if (!el) return '';
+    if (!elementIds.has(el)) elementIds.set(el, `npc-${nextElementId++}`);
+    return elementIds.get(el);
+  }
+
+  function isVisible(el) {
+    if (!el || !(el instanceof Element)) return false;
+    const s = getComputedStyle(el);
+    if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  function textOf(el) {
+    return (el?.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function overlay() {
+    return document.querySelector(CFG.overlaySelector);
+  }
+
+  function dialogueRoot() {
+    return document.querySelector(CFG.dialogueRootSelector) || overlay();
+  }
+
+  function overlayOpen() {
+    const ov = overlay();
+    return !!ov && (ov.classList.contains('isOpen') || isVisible(ov));
+  }
+
+  function getDialogueText() {
+    const root = dialogueRoot();
+    if (!root) return '';
+    return [
+      root.querySelector('#dlgQuestBadge'),
+      root.querySelector('#dlgName'),
+      root.querySelector('#dlgText')
+    ].filter(Boolean).map(textOf).filter(Boolean).join(' | ');
+  }
+
+  function allNPCs() {
+    return [...document.querySelectorAll(CFG.npcSelector)].filter(isVisible);
+  }
+
+  function getNpcName(npc) {
+    if (!npc) return '';
+
+    const img = npc.querySelector('img');
+
+    const candidates = [
+      npc.getAttribute('data-name'),
+      npc.dataset?.name,
+      npc.getAttribute('data-npc-name'),
+      npc.dataset?.npcName,
+      npc.getAttribute('aria-label'),
+      npc.getAttribute('title'),
+      img?.alt,
+      npc.querySelector('.npcName')?.textContent,
+      npc.querySelector('.name')?.textContent,
+      npc.querySelector('.label')?.textContent,
+      textOf(npc)
+    ];
+
+    for (let s of candidates) {
+      s = (s || '').replace(/\s+/g, ' ').trim();
+      if (s) return s;
+    }
+
+    return `NPC ${getElementId(npc)}`;
+  }
+
+  function npcKey(npc) {
+    if (!npc) return '';
+
+    const r = npc.getBoundingClientRect();
+    const name = getNpcName(npc);
+    const id = getElementId(npc);
+
+    return [
+      name,
+      npc.getAttribute('data-id') || '',
+      npc.getAttribute('data-npc-id') || '',
+      npc.dataset?.id || '',
+      id,
+      Math.round(r.left),
+      Math.round(r.top),
+      Math.round(r.width),
+      Math.round(r.height)
+    ].join('|');
+  }
+
+  function resolveNpcByKey(key) {
+    if (!key) return null;
+    return allNPCs().find(npc => npcKey(npc) === key) || null;
+  }
+
+  function getMemory(key) {
+    if (!npcMemory[key]) {
+      npcMemory[key] = {
+        type: 'unknown',   // unknown | quest | nonQuest
+        tempDone: false,
+        visits: 0,
+        questSeen: false
+      };
+    }
+    return npcMemory[key];
+  }
+
+  function sessionReset(npc = null) {
+    state.session = {
+      npcKey: npc ? npcKey(npc) : '',
+      step: 0,
+      uniqueSignatures: new Set(),
+      sawNext: false,
+      sawAccept: false,
+      sawClaim: false,
+      sawQuestAction: false,
+      closeOnly: false,
+      lastSig: '',
+      sameSigCount: 0,
+      buttons: []
+    };
+  }
+
+  function getClickableButtonsInDialogue() {
+    const root = dialogueRoot();
+    if (!root) return [];
+
+    const buttons = [
+      ...root.querySelectorAll('button'),
+      ...root.querySelectorAll(CFG.choicesSelector),
+      ...root.querySelectorAll(CFG.actionsSelector)
+    ];
+
+    return buttons.filter(el => el instanceof HTMLElement && isVisible(el) && !el.disabled);
+  }
+
+  function findButtonByText(regex) {
+    return getClickableButtonsInDialogue().find(btn => regex.test(textOf(btn)));
+  }
+
+  function findExactButton(id) {
+    const root = dialogueRoot();
+    if (!root) return null;
+    const el = root.querySelector(`#${CSS.escape(id)}`);
+    if (el && isVisible(el) && !el.disabled) return el;
+    return null;
+  }
+
+  function dialogueSignature() {
+    const text = getDialogueText();
+    const buttons = getClickableButtonsInDialogue()
+      .map(btn => textOf(btn).toLowerCase())
+      .sort()
+      .join(' | ');
+    return `${text} :: ${buttons}`;
+  }
+
+  function recordDialogueState() {
+    if (!state.session) sessionReset();
+
+    const sig = dialogueSignature();
+    if (sig) {
+      if (sig !== state.session.lastSig) {
+        state.session.step += 1;
+        state.session.lastSig = sig;
+        state.session.sameSigCount = 0;
+      } else {
+        state.session.sameSigCount += 1;
+      }
+      state.session.uniqueSignatures.add(sig);
+    }
+
+    const buttons = getClickableButtonsInDialogue();
+    state.session.buttons = buttons;
+
+    const texts = buttons.map(textOf).map(t => t.toLowerCase());
+
+    state.session.sawNext ||= texts.some(t => /\bnext\b|\bcontinue\b|\bmore\b/.test(t));
+    state.session.sawAccept ||= texts.some(t => /^(accept|yes|ok|okay)$/.test(t) || /\baccept\b/.test(t));
+    state.session.sawClaim ||= texts.some(t => /\bclaim\b/.test(t));
+
+    state.session.sawQuestAction ||= (
+      state.session.sawNext ||
+      state.session.sawAccept ||
+      state.session.sawClaim ||
+      texts.some(t => /\breward\b|\bturn in\b|\bturnin\b|\bproceed\b/.test(t))
+    );
+
+    state.session.closeOnly =
+      buttons.length <= 1 ||
+      buttons.every(btn => /^(close|done|finish|exit)$/i.test(textOf(btn)));
+  }
+
+  function dispatchClick(el) {
+    if (!el) return false;
+
+    try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+    try { el.focus({ preventScroll: true }); } catch {}
+
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+
+    const x = Math.floor(r.left + r.width / 2);
+    const y = Math.floor(r.top + r.height / 2);
+
+    const mouseOpts = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
+      clientX: x,
+      clientY: y,
+      screenX: x,
+      screenY: y,
+      buttons: 1,
+      detail: 1
+    };
+
+    try {
+      el.dispatchEvent(new PointerEvent('pointerdown', {
+        ...mouseOpts,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true
+      }));
+      el.dispatchEvent(new MouseEvent('mousedown', mouseOpts));
+      el.dispatchEvent(new PointerEvent('pointerup', {
+        ...mouseOpts,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true,
+        buttons: 0
+      }));
+      el.dispatchEvent(new MouseEvent('mouseup', { ...mouseOpts, buttons: 0 }));
+      el.dispatchEvent(new MouseEvent('click', { ...mouseOpts, buttons: 0 }));
+    } catch {}
+
+    try {
+      if (typeof el.click === 'function') el.click();
+    } catch {}
+
+    return true;
+  }
+
+  function dispatchEscape() {
+    const opts = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      key: 'Escape',
+      code: 'Escape',
+      which: 27,
+      keyCode: 27
+    };
+
+    try { document.dispatchEvent(new KeyboardEvent('keydown', opts)); } catch {}
+    try { document.dispatchEvent(new KeyboardEvent('keyup', opts)); } catch {}
+  }
+
+  function hideUiTemporarily(fn) {
+    const root = ui.root;
+    const mini = ui.mini;
+
+    const rootDisplay = root ? root.style.display : '';
+    const miniDisplay = mini ? mini.style.display : '';
+
+    if (root) root.style.display = 'none';
+    if (mini) mini.style.display = 'none';
+
+    try {
+      return fn();
+    } finally {
+      requestAnimationFrame(() => {
+        if (root) root.style.display = rootDisplay;
+        if (mini) mini.style.display = miniDisplay;
+      });
+    }
+  }
+
+  function humanClick(el) {
+    if (!el) return false;
+    state.lastActionAt = Date.now();
+    return hideUiTemporarily(() => dispatchClick(el));
+  }
+
+  function forceCloseDialogue() {
+    const backdrop = document.querySelector('#dlgBackdrop');
+    const candidates = [
+      findExactButton('dlgNext'),
+      findExactButton('dlgSkip'),
+      findButtonByText(/^(next|continue|skip)$/i),
+      findButtonByText(/^(claim)$/i),
+      findButtonByText(/^(accept|yes|ok|okay)$/i),
+      findButtonByText(/^(close|done|finish|exit)$/i),
+      backdrop
+    ].filter(Boolean);
+
+    for (const el of candidates) {
+      if (humanClick(el)) return true;
+    }
+
+    dispatchEscape();
+    return false;
+  }
+
+  function clickDialogueForward() {
+    if (!overlayOpen()) return false;
+
+    recordDialogueState();
+
+    const exactNext = findExactButton('dlgNext');
+    if (exactNext && humanClick(exactNext)) return true;
+
+    const skipBtn = findExactButton('dlgSkip');
+    if (skipBtn && humanClick(skipBtn)) return true;
+
+    const nextLike = findButtonByText(/^(next|continue)$/i);
+    if (nextLike && humanClick(nextLike)) return true;
+
+    const claimBtn = findButtonByText(/^(claim)$/i);
+    if (claimBtn && humanClick(claimBtn)) return true;
+
+    const acceptBtn = findButtonByText(/^(accept|yes|ok|okay)$/i);
+    if (acceptBtn && humanClick(acceptBtn)) return true;
+
+    const closeBtn = findButtonByText(/^(close|done|finish|exit)$/i);
+    if (closeBtn && humanClick(closeBtn)) return true;
+
+    if (state.session?.closeOnly || state.session?.sameSigCount >= 1) {
+      return forceCloseDialogue();
+    }
+
+    return false;
+  }
+
+  function openNpc(npc) {
+    if (!npc) return false;
+
+    const key = npcKey(npc);
+    const name = getNpcName(npc);
+
+    if (state.currentNpcKey === key && overlayOpen()) return false;
+
+    state.currentNpcKey = key;
+    state.currentNpcName = name;
+    sessionReset(npc);
+    state.lastActionAt = Date.now();
+    return humanClick(npc);
+  }
+
+  function markTempDone(key) {
+    if (!key) return;
+    const mem = getMemory(key);
+    mem.tempDone = true;
+  }
+
+  function allVisibleDone() {
+    const visible = allNPCs();
+    if (!visible.length) return false;
+    return visible.every(npc => getMemory(npcKey(npc)).tempDone);
+  }
+
+  function pickNextNpc() {
+    const visible = allNPCs();
+    if (!visible.length) return null;
+
+    const unseen = visible.filter(npc => !state.processedThisPass.has(npcKey(npc)));
+    const pool = unseen.length ? unseen : visible;
+
+    if (!unseen.length) {
+      state.processedThisPass.clear();
+      state.passNo += 1;
+    }
+
+    const inPool = predicate => pool.find(npc => predicate(getMemory(npcKey(npc)))) || null;
+
+    const unknown = inPool(mem => mem.type === 'unknown');
+    if (unknown) return unknown;
+
+    const questPending = inPool(mem => mem.type === 'quest' && !mem.tempDone);
+    if (questPending) return questPending;
+
+    const nonQuestPending = inPool(mem => mem.type === 'nonQuest' && !mem.tempDone);
+    if (nonQuestPending) return nonQuestPending;
+
+    return null;
+  }
+
+  function handleDialogueClosed() {
+    const key = state.currentNpcKey || state.session?.npcKey || '';
+    if (!key) return;
+
+    const npc = resolveNpcByKey(key);
+    const mem = getMemory(key);
+
+    mem.visits += 1;
+
+    const sawQuestAction = !!state.session?.sawQuestAction;
+    const stepCount = state.session?.step || 0;
+    const closeOnly = !!state.session?.closeOnly;
+
+    if (sawQuestAction) {
+      mem.type = 'quest';
+      mem.questSeen = true;
+      mem.tempDone = false;
+      state.lastQuestGiverKey = key;
+    } else if (closeOnly || stepCount <= 1) {
+      mem.type = 'nonQuest';
+      mem.tempDone = true;
+    } else {
+      if (mem.type !== 'quest') mem.type = 'nonQuest';
+      mem.tempDone = true;
+    }
+
+    state.lastProcessedKey = key;
+    state.lastProcessedName = getNpcName(npc);
+    state.processedThisPass.add(key);
+    state.currentNpcKey = '';
+    state.currentNpcName = '';
+  }
+
+  function setSuccess(message = 'Success') {
+    state.running = false;
+    state.finishMode = true;
+    state.success = true;
+
+    if (ui.root) ui.root.style.display = 'block';
+    if (ui.mini) ui.mini.style.display = 'block';
+    state.uiMinimized = false;
+
+    refreshStatus(message);
+  }
+
+  function rebuildNpcState({ keepAnchor = true } = {}) {
+    const visible = allNPCs();
+    state.lastNpcCount = visible.length;
+
+    if (!keepAnchor) return;
+
+    const anchorKey = state.currentNpcKey || state.lastProcessedKey || state.lastQuestGiverKey || '';
+    if (anchorKey) {
+      const stillThere = visible.some(npc => npcKey(npc) === anchorKey);
+      if (!stillThere) {
+        state.currentNpcKey = '';
+        state.currentNpcName = '';
+      }
+    }
+  }
+
+  function rescanNpcs({ keepPosition = true } = {}) {
+    rebuildNpcState({ keepAnchor: keepPosition });
+
+    if (allVisibleDone()) {
+      setSuccess('Success • everything is temporarily done');
+      return;
+    }
+
+    state.processedThisPass = new Set([...state.processedThisPass].filter(key => {
+      return !!resolveNpcByKey(key);
+    }));
+
+    state.idleTicks = 0;
+    refreshStatus('NPC list rescanned');
+  }
+
+  function refreshStatus(extra = '') {
+    if (!ui.status) return;
+
+    const visible = allNPCs();
+    const total = visible.length;
+    const tempDone = visible.filter(npc => getMemory(npcKey(npc)).tempDone).length;
+    const questPending = visible.filter(npc => {
+      const mem = getMemory(npcKey(npc));
+      return mem.type === 'quest' && !mem.tempDone;
+    }).length;
+
+    const mode = state.success ? 'Success' : (state.running ? 'Running' : 'Stopped');
+    const visibility = state.uiMinimized ? 'Minimized' : 'Expanded';
+    const activeName = state.currentNpcName || state.lastProcessedName || '—';
+
+    ui.status.textContent = [
+      mode,
+      visibility,
+      `${tempDone}/${total || 0} temp done`,
+      `${questPending} quest pending`,
+      `Pass ${state.passNo}`,
+      `NPC ${activeName}`,
+      extra || ''
+    ].filter(Boolean).join(' • ');
+
+    if (ui.runBtn) {
+      ui.runBtn.textContent = state.running ? 'Stop' : 'Start';
+      ui.runBtn.style.background = state.running ? '#ef4444' : '#3b82f6';
+    }
+
+    if (ui.mini) {
+      ui.mini.textContent = state.uiMinimized ? (state.running ? 'NPC ●' : 'NPC') : 'Minimize';
+    }
+  }
+
+  function setMiniMode(minimized) {
+    state.uiMinimized = minimized;
+    if (ui.root) ui.root.style.display = minimized ? 'none' : 'block';
+    if (ui.mini) ui.mini.style.display = 'block';
+    refreshStatus();
+  }
+
+  function fullReset() {
+    for (const k in npcMemory) delete npcMemory[k];
+    state.processedThisPass.clear();
+    state.passNo = 1;
+    state.finishMode = false;
+    state.success = false;
+    state.currentNpcKey = '';
+    state.currentNpcName = '';
+    state.lastProcessedKey = '';
+    state.lastProcessedName = '';
+    state.lastQuestGiverKey = '';
+    state.lastNpcCount = 0;
+    state.idleTicks = 0;
+    state.lastActionAt = 0;
+    sessionReset();
+  }
+
+  function setRunning(on) {
+    if (on && state.success) {
+      fullReset();
+      state.running = true;
+      rescanNpcs({ keepPosition: false });
+      setMiniMode(true);
+      refreshStatus('Restarted');
+      return;
+    }
+
+    state.running = on;
+    state.finishMode = false;
+    state.success = false;
+    state.currentNpcKey = '';
+    state.currentNpcName = '';
+    state.lastProcessedKey = '';
+    state.lastProcessedName = '';
+    state.lastQuestGiverKey = '';
+    state.idleTicks = 0;
+    state.lastActionAt = 0;
+
+    if (on) {
+      state.processedThisPass.clear();
+      rescanNpcs({ keepPosition: false });
+      setMiniMode(true);
+      refreshStatus('Started');
+    } else {
+      setMiniMode(false);
+      refreshStatus('Stopped');
+    }
+  }
+
+  function tick() {
+    if (!state.running) return;
+    if (Date.now() - state.lastActionAt < CFG.actionCooldownMs) return;
+
+    const currentCount = allNPCs().length;
+    if (currentCount !== state.lastNpcCount) {
+      state.lastNpcCount = currentCount;
+      rescanNpcs({ keepPosition: true });
+      refreshStatus('NPCs updated');
+      return;
+    }
+
+    if (overlayOpen()) {
+      const clicked = clickDialogueForward();
+      if (!clicked) state.idleTicks += 1;
+      else state.idleTicks = 0;
+
+      if (!overlayOpen()) {
+        handleDialogueClosed();
+
+        if (state.success || state.finishMode) return;
+
+        if (allVisibleDone()) {
+          setSuccess('Success • everything is temporarily done');
+          return;
+        }
+
+        refreshStatus();
+      } else if (state.session?.sameSigCount >= 1) {
+        forceCloseDialogue();
+      }
+
+      return;
+    }
+
+    if (state.finishMode || state.success) return;
+
+    if (!state.processedThisPass.size && !state.currentNpcKey) {
+      state.lastNpcCount = currentCount;
+    }
+
+    const npc = pickNextNpc();
+
+    if (!npc) {
+      if (allVisibleDone()) {
+        setSuccess('Success • everything is temporarily done');
+      } else {
+        state.processedThisPass.clear();
+        state.passNo += 1;
+        refreshStatus('New pass');
+      }
+      return;
+    }
+
+    const key = npcKey(npc);
+    const name = getNpcName(npc);
+
+    const opened = openNpc(npc);
+    if (!opened) {
+      state.processedThisPass.add(key);
+      state.idleTicks += 1;
+    } else {
+      state.idleTicks = 0;
+      refreshStatus(`Opening ${name}`);
+    }
+  }
+
+  function makeUI() {
+    const root = document.createElement('div');
+    root.id = 'autoNpcQuestUi';
+    root.style.cssText = `
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      z-index: 999999;
+      width: 260px;
+      background: rgba(18,18,22,.92);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 16px;
+      box-shadow: 0 14px 40px rgba(0,0,0,.35);
+      backdrop-filter: blur(10px);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      overflow: hidden;
+    `;
+
+    root.innerHTML = `
+      <div style="padding:12px 12px 10px; border-bottom:1px solid rgba(255,255,255,.08);">
+        <div style="font-weight:700; font-size:14px;">NPC Quest Runner</div>
+        <div id="autoNpcQuestStatus" style="font-size:12px; opacity:.8; margin-top:4px; line-height:1.35;">Stopped</div>
+      </div>
+
+      <div style="padding:12px; display:grid; gap:10px;">
+        <button id="autoNpcQuestRunBtn" style="
+          width:100%; padding:10px 12px; border:0; border-radius:12px;
+          background:#3b82f6; color:#fff; font-weight:700; cursor:pointer;
+        ">Start</button>
+
+        <button id="autoNpcQuestResetBtn" style="
+          width:100%; padding:9px 12px; border:0; border-radius:12px;
+          background:#2a2a32; color:#fff; cursor:pointer;
+        ">Rescan NPCs</button>
+      </div>
+    `;
+
+    document.body.appendChild(root);
+
+    ui.root = root;
+    ui.status = root.querySelector('#autoNpcQuestStatus');
+    ui.runBtn = root.querySelector('#autoNpcQuestRunBtn');
+    ui.resetBtn = root.querySelector('#autoNpcQuestResetBtn');
+
+    ui.runBtn.addEventListener('click', () => setRunning(!state.running));
+    ui.resetBtn.addEventListener('click', () => rescanNpcs({ keepPosition: true }));
+
+    const mini = document.createElement('button');
+    mini.textContent = 'NPC';
+    mini.style.cssText = `
+      position: fixed;
+      right: 14px;
+      bottom: 286px;
+      z-index: 999999;
+      padding: 8px 10px;
+      border: 0;
+      border-radius: 999px;
+      background: rgba(18,18,22,.92);
+      color: #fff;
+      box-shadow: 0 10px 24px rgba(0,0,0,.3);
+      cursor: pointer;
+      font-weight: 700;
+    `;
+    mini.addEventListener('click', () => setMiniMode(!state.uiMinimized));
+    document.body.appendChild(mini);
+    ui.mini = mini;
+
+    refreshStatus('Ready');
+  }
+
+  function start() {
+    makeUI();
+    sessionReset();
+    rebuildNpcState({ keepAnchor: false });
+    setMiniMode(true);
+
+    intervalId = setInterval(tick, CFG.tickMs);
+
+    observer = new MutationObserver(() => {
+      if (state.running) tick();
+    });
+
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+  }
+
+  function cleanup() {
+    if (intervalId) clearInterval(intervalId);
+    if (observer) observer.disconnect();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start, { once: true });
+  } else {
+    start();
+  }
+
+  window.addEventListener('beforeunload', cleanup, { passive: true });
+})();
+
+
+
+
