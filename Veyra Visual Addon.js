@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.16.3
+// @version      2.16.4
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -11588,7 +11588,26 @@ await sleep(500);
 (function () {
   'use strict';
 
-  console.log('[BossTimers] v10.0 – IST server time + Local time');
+  console.log('[BossTimers] v11.0 – IST server time + Local time + Alerts');
+
+
+/* ================= TEST MODE ================= */
+
+// Set to 0 to disable test mode
+const TEST_TIME_OFFSET_MINUTES = 0; // ⏩ simulate local time +x min
+
+
+/* ================= DISPLAY OVERRIDES ================= */
+
+function getDisplayGateWave(gate, wave) {
+  if (gate === 3 && wave === 8) {
+    return { gate: 1, wave: 3 };
+  }
+  if (gate === 5 && wave === 9) {
+    return { gate: 2, wave: 1 };
+  }
+  return { gate, wave };
+}
 
   /* ================= CONFIG ================= */
 
@@ -11597,6 +11616,102 @@ await sleep(500);
     { gate: 5, wave: 9 }
   ];
 
+  /* ================= ALERT SYSTEM ================= */
+
+const ALERT_STORAGE_KEY = 'BossTimers_alerted_v1';
+
+function loadAlertedBosses() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(ALERT_STORAGE_KEY) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveAlertedBosses(set) {
+  localStorage.setItem(ALERT_STORAGE_KEY, JSON.stringify([...set]));
+}
+
+const alertedBosses = loadAlertedBosses();  const scheduledBosses = [];
+
+  function showBossAlert(boss) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 99999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    `;
+
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      background: #111827;
+      padding: 18px 22px;
+      border-radius: 12px;
+      max-width: 320px;
+      text-align: center;
+      font-family: system-ui;
+      color: #fff;
+      box-shadow: 0 0 20px rgba(0,0,0,.5);
+    `;
+
+    modal.innerHTML = `
+      <div style="font-size:14px; color:#a78bfa; margin-bottom:6px;">
+        Boss Spawned
+      </div>
+      <div style="font-size:18px; font-weight:600;">
+        ${boss.name}
+      </div>
+      <div style="margin-top:8px; font-size:12px; color:#88ff88;">
+
+${(() => {
+        const d = getDisplayGateWave(boss.gate, boss.wave);
+        return `Gate ${d.gate} • Wave ${d.wave}`;
+    })()}
+
+      </div>
+      <button style="
+        margin-top:14px;
+        padding:6px 14px;
+        border-radius:6px;
+        border:none;
+        background:#4f46e5;
+        color:white;
+        cursor:pointer;
+      ">OK</button>
+    `;
+
+    modal.querySelector('button').onclick = () => overlay.remove();
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+  }
+
+ function startAlertWatcher() {
+  const testOffsetSeconds = TEST_TIME_OFFSET_MINUTES * 60;
+
+  console.log(
+    '[BossTimers] Alert test offset:',
+    TEST_TIME_OFFSET_MINUTES
+      ? `+${TEST_TIME_OFFSET_MINUTES} minutes`
+      : 'OFF'
+  );
+
+  setInterval(() => {
+    // ⏱️ Simulated "now"
+    const now = (Date.now() / 1000) + testOffsetSeconds;
+
+    scheduledBosses.forEach(boss => {
+      if (now >= boss.spawnTs && !alertedBosses.has(boss.id)) {
+          alertedBosses.add(boss.id);
+          saveAlertedBosses(alertedBosses);
+          showBossAlert(boss);
+      }
+    });
+  }, 1000);
+}
   /* ================= TIME HELPERS ================= */
 
   function parseDuration(str) {
@@ -11613,7 +11728,7 @@ await sleep(500);
     if (!ts || ts < 1e9) return '—';
 
     return new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Kolkata', // ✅ IST
+      timeZone: 'Asia/Kolkata',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -11663,16 +11778,31 @@ await sleep(500);
             const spawnTs = alive ? nextTs - cycle : nextTs;
             const deathTs = spawnTs + autoDie;
 
+            const bossId = `${gate}-${wave}-${name}-${spawnTs}`;
+
             bosses.push({
               gate,
               wave,
               name,
               alive,
+              spawnTs,
               serverSpawn: formatServerIST(spawnTs),
               serverDeath: formatServerIST(deathTs),
               localSpawn: formatLocalTime(spawnTs),
-              localDeath: formatLocalTime(deathTs)
+              localDeath: formatLocalTime(deathTs),
+              id: bossId
             });
+
+            // 🔔 Schedule alert (future spawns only)
+            if (!alive && spawnTs > Date.now() / 1000) {
+              scheduledBosses.push({
+                gate,
+                wave,
+                name,
+                spawnTs,
+                id: bossId
+              });
+            }
           });
 
           resolve(bosses);
@@ -11708,12 +11838,16 @@ await sleep(500);
         const row = document.createElement('div');
         row.style.marginTop = '6px';
         row.innerHTML = `
-          <span style="color:#a78bfa;">${b.name}</span><br>
-          <span style="color:#ffd966;">Server:</span>
-          ${b.serverSpawn}<br>
-          <span style="color:#88ff88;">Local:</span>
-          ${b.localSpawn}
-          ${b.alive ? '<span style="color:#4caf50;"> (NOW)</span>' : ''}
+         ${(() => {
+            const d = getDisplayGateWave(b.gate, b.wave);
+            return `
+    <span style="color:#a78bfa;">${b.name}</span><br>
+    <span style="color:#bbb;">Gate ${d.gate} • Wave ${d.wave}</span><br>
+    <span style="color:#ffd966;">Server:</span> ${b.serverSpawn}<br>
+    <span style="color:#88ff88;">Local:</span> ${b.localSpawn}
+    ${b.alive ? '<span style="color:#4caf50;"> (NOW)</span>' : ''}
+  `;
+        })()}
         `;
         box.appendChild(row);
       });
@@ -11737,10 +11871,14 @@ await sleep(500);
 
   /* ================= START ================= */
 
+  startAlertWatcher();
+
   Promise.all(gatesConfig.map(g => fetchBossData(g.gate, g.wave)))
     .then(res => waitForMenu(res.flat()))
     .catch(err => console.error('[BossTimers] Error:', err));
+
 })();
+
 
 //event npc auto dialog
 (function () {
