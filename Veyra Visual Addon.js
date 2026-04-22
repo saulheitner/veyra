@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.16.4
+// @version      2.16.5
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -4197,7 +4197,6 @@ createDungeonCards();
 //  End Guild sidebar section
 
 // Adventurers sidebar section
-// Adventurers sidebar section
 function initAdventurersGuildQuests() {
     const questsContainer = document.getElementById('quest-expanded');
     if (!questsContainer) return;
@@ -4506,6 +4505,7 @@ function startSidebarCooldownTimers() {
     updateTimers();
     setInterval(updateTimers, 1000);
 }
+
 function sidebarDonateQuest(questId, itemId, btn) {
     // Create quantity input popup
     const existingPopup = document.getElementById('quest-donate-popup');
@@ -4675,6 +4675,7 @@ function sidebarQuestAction(actionType, questId, btn) {
 
     fetch(endpoints[actionType], {
             method: 'POST',
+            credentials: 'include',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded'
             },
@@ -4716,6 +4717,10 @@ function sidebarQuestAction(actionType, questId, btn) {
             btn.disabled = false;
             btn.textContent = actionType === 'giveUp' ? 'Give up' : 'Finish quest';
         });
+
+
+    setTimeout(initAdventurersGuildQuests, 500);
+
 }
 
 function sidebarAcceptQuest(questId, btn) {
@@ -5641,7 +5646,6 @@ function initNavOrderUI({
         onReset?.(prefs);
     });
 }
-//initNavOrderUI();
 
 //top hp/mp bar
 (function() {
@@ -5986,7 +5990,7 @@ function initNavOrderUI({
     });
 })();
 
-//quest windown modal
+//quest window modal
 
 //// Call once (recommended near script start)
 function injectQuestModalStyles() {
