@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.16.5
+// @version      2.16.6
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -95,6 +95,7 @@ function isExceptionPage() {
         {key: 'army_damage_dealt',label: 'Shadow army — Damage dealt pill'},
         {key: 'pvp_hp_bar',       label: 'PvP HP Bar'},
         {key: 'qol_revamp',       label: 'Modified QoL Section'},
+        {key: 'boss_spawn_alert', label: 'Boss spawn popup alert' },
 
         // { key: 'membersInRed',         label: 'Highlight guild members in red' },
 
@@ -10146,6 +10147,15 @@ if (document.getElementById("wave-addon-filter-panel")) {
   return;
 }
 
+const ATK_SKILLS = {
+  1:   { skillId: 0,  label: "Slash" },
+  10:  { skillId: -1, label: "Power Slash" },
+  50:  { skillId: -2, label: "Heroic Slash" },
+  100: { skillId: -3, label: "Ultimate Slash" },
+  200: { skillId: -4, label: "Legendary Slash" },
+  1000:{ skillId: -5, label: "World Breaker Slash" }
+};
+
 const observer = new MutationObserver(() => {
   if (document.getElementById("wave-addon-filter-panel")) {
     console.log("[QoL] Wave Addon detected late — aborting QoL.");
@@ -10493,13 +10503,13 @@ let autoUseStaminaPotion =
             form.append("monster_id", mid);
         }
 
-        const skillId =
-              staminaCost === 1 ? 0 :
-        staminaCost === 10 ? -1 :
-        staminaCost === 50 ? -2 :
-        staminaCost === 100 ? -3 : -4;
 
-        form.append("skill_id", skillId);
+        const skill = ATK_SKILLS[staminaCost];
+        if (!skill) {
+            throw new Error("Unknown stamina cost: " + staminaCost);
+        }
+
+        form.append("skill_id", skill.skillId);
         form.append("stamina_cost", staminaCost);
 
         const res = await fetch("damage.php", {
@@ -10932,9 +10942,9 @@ stamToggleWrap.style.cssText = `
   display:flex;
   align-items:center;
   gap:6px;
-  margin-left:12px;
+  margin-left:0px;
   padding:6px 10px;
-  background:#171c2f;
+  background:#1e2235;
   border:1px solid #303a60;
   border-radius:6px;
   color:#cdd4ff;
@@ -10971,9 +10981,9 @@ stamToggleWrap.append(
       const btn = document.createElement("button");
       btn.className = "qol-btn primary";
       btn.style.minWidth = "165px";
-      btn.innerHTML = `⚡ Quick Join & Attack <span style="opacity:.8">(${stam})</span>`;
+      btn.innerHTML = `⚡ ${ATK_SKILLS[stam].label}<span style="opacity:.8">(${stam})</span>`;
 
-        btn.onclick = async () => {
+      btn.onclick = async () => {
 
   if (QOL_ABORTED) return;
 
@@ -11088,14 +11098,13 @@ async function attackMonster(mid, staminaCost, retry = false) {
     form.append("monster_id", mid);
   }
 
-  const skillId =
-    staminaCost === 1 ? 0 :
-    staminaCost === 10 ? -1 :
-    staminaCost === 50 ? -2 :
-    staminaCost === 100 ? -3 : -4;
+const skill = ATK_SKILLS[staminaCost];
+if (!skill) {
+  throw new Error("Unknown stamina cost: " + staminaCost);
+}
 
-  form.append("skill_id", skillId);
-  form.append("stamina_cost", staminaCost);
+form.append("skill_id", skill.skillId);
+form.append("stamina_cost", staminaCost);
 
   const res = await fetch("damage.php", {
     method: "POST",
@@ -11499,7 +11508,7 @@ stamToggleWrap.style.cssText = `
   gap:6px;
   margin-left:0px;
   padding:6px 10px;
-  background:#171c2f;
+  background:#1e2235;
   border:1px solid #303a60;
   border-radius:6px;
   color:#cdd4ff;
@@ -11531,13 +11540,12 @@ stamToggleWrap.append(
   atkWrap.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;";
   qolAttacks.appendChild(atkWrap);
 
-  [1, 10, 50, 100, 200].forEach(stam => {
+  [1, 10, 50, 100, 200, 1000].forEach(stam => {
     const b = document.createElement("button");
     b.className = "qol-btn primary";
     b.style.minWidth = "210px";
-    b.innerHTML = `
-      <span style="opacity:.75;font-size:12px">⚡ Quick Join & Attack(${stam})</span>
-    `;
+    b.innerHTML = `<span style="opacity:.75;font-size:12px">⚡ ${ATK_SKILLS[stam].label} (${stam}) </span>`;
+
 
       b.onclick = async () => {
           if (!selectedMonsterIds.length) return;
@@ -11639,6 +11647,11 @@ function saveAlertedBosses(set) {
 const alertedBosses = loadAlertedBosses();  const scheduledBosses = [];
 
   function showBossAlert(boss) {
+
+  if (window.vv && typeof window.vv.isOn === 'function') {
+    if (!vv.isOn('boss_spawn_alert')) return;
+  }
+
     const overlay = document.createElement('div');
     overlay.style.cssText = `
       position: fixed;
