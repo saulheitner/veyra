@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.16.6
+// @version      2.17.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -96,6 +96,8 @@ function isExceptionPage() {
         {key: 'pvp_hp_bar',       label: 'PvP HP Bar'},
         {key: 'qol_revamp',       label: 'Modified QoL Section'},
         {key: 'boss_spawn_alert', label: 'Boss spawn popup alert' },
+        {key: 'custom_auto_farm', label: 'Custom Auto Farm' },
+
 
         // { key: 'membersInRed',         label: 'Highlight guild members in red' },
 
@@ -9816,147 +9818,171 @@ listDiv.appendChild(card);
 })();
 
 //Army damage dealt
-(function() {
+(function () {
     if (!vv.isOn('army_damage_dealt')) return;
     'use strict';
+    if (!/shadow_army_live_battle\.php$/.test(window.location.pathname)) return;
+    const CONTRIBUTORS_URL =
+        "https://demonicscans.org/guild_dungeon_cube_army_action.php";
 
-    const url = "https://demonicscans.org/guild_dungeon_cube_army_action.php";
+    const STATE_URL =
+        "https://demonicscans.org/shadow_army_live_battle.php";
 
-    const nodes = [5, 6, 11];
-    const matches = [1, 2, 3, 4];
+    /* ======================
+       Helpers
+    ====================== */
 
-    // Detect your userId from cookie "demon"
     function getMyUserId() {
-        let m = document.cookie.match(/(?:^|;\s*)demon=(\d+)/);
-        return m ? parseInt(m[1], 10) : null;
+        const m = document.cookie.match(/(?:^|;\s*)demon=(\d+)/);
+        return m ? Number(m[1]) : null;
     }
 
-    // Extract instance_id from link
-    function getInstanceId() {
+    function getInstanceAndNode() {
         const btn = document.querySelector('a.btn[href*="instance_id"]');
         if (!btn) return null;
 
-        const urlObj = new URL(btn.href, window.location.origin);
-        return urlObj.searchParams.get("instance_id");
+        const u = new URL(btn.href, location.origin);
+        return {
+            instanceId: u.searchParams.get("instance_id"),
+            nodeId: u.searchParams.get("node_id")
+        };
     }
 
-    // Wait for page element
     function waitForElement(selector, cb) {
         const el = document.querySelector(selector);
         if (el) cb(el);
         else setTimeout(() => waitForElement(selector, cb), 200);
     }
 
-    // UI damage box
+    /* ======================
+       UI
+    ====================== */
+
     function injectUI() {
         const pill = document.querySelector(".top-actions .status-pill");
-        if (!pill) return;
-        if (document.getElementById("myDamageTracker")) return;
+        if (!pill || document.getElementById("myDamageTracker")) return;
 
         const box = document.createElement("div");
         box.id = "myDamageTracker";
-        box.style.marginLeft = "10px";
-        box.style.padding = "4px 10px";
-        box.style.background = "#222";
-        box.style.color = "#0f0";
-        box.style.borderRadius = "6px";
-        box.style.fontSize = "14px";
-        box.style.fontWeight = "bold";
-
+        box.style.cssText = `
+            margin-left:10px;
+            padding:4px 10px;
+            background:#222;
+            color:#0f0;
+            border-radius:6px;
+            font-size:14px;
+            font-weight:bold;
+        `;
         box.innerText = "Total dmg dealt: ...";
-
         pill.parentNode.appendChild(box);
     }
 
-    // Fetch for a single node+match
-    async function scan(nodeId, matchNo, instanceId, myUserId) {
-        try {
-            const payload = new URLSearchParams({
-                action: "contributors",
-                instance_id: instanceId,
-                node_id: String(nodeId),
-                match_no: String(matchNo)
-            });
+    /* ======================
+       Determine active match
+    ====================== */
 
-            const response = await fetch(url, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-                },
-                body: payload
-            });
+    async function getActiveMatchNo(battleId) {
+        const payload = new URLSearchParams({
+            action: "get_state",
+            battle_id: battleId
+        });
 
-            const data = await response.json();
-            if (!data.ok) return 0;
+        const res = await fetch(STATE_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+            },
+            body: payload
+        });
 
-            const me = data.board.attackers.find(a => a.user_id === myUserId);
-            return me ? me.damage_dealt : 0;
+        const data = await res.json();
+        if (!data.ok) return 1;
 
-        } catch (err) {
-            console.error(`Error node ${nodeId} match ${matchNo}:`, err);
-            return 0;
-        }
+        // This field tells us which match you're engaged in
+        return data.state.viewer.other_active_match_no || 1;
     }
 
-    // Main loop
+    /* ======================
+       Contributors fetch
+    ====================== */
+
+    async function fetchMyDamage(instanceId, nodeId, matchNo, myUserId) {
+        const payload = new URLSearchParams({
+            action: "contributors",
+            instance_id: instanceId,
+            node_id: String(nodeId),
+            match_no: String(matchNo)
+        });
+
+        const res = await fetch(CONTRIBUTORS_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+            },
+            body: payload
+        });
+
+        const data = await res.json();
+        if (!data.ok) return 0;
+
+        const me = data.board.attackers.find(
+            a => a.user_id === myUserId
+        );
+
+        return me ? me.damage_dealt : 0;
+    }
+
+    /* ======================
+       Main loop
+    ====================== */
+
     async function startScanner() {
-        const instanceId = getInstanceId();
+        const ids = getInstanceAndNode();
         const myUserId = getMyUserId();
 
-        if (!instanceId) {
-            console.warn("instance_id not found.");
-            return;
-        }
-
-        if (!myUserId) {
-            console.warn("Could not get userId from cookie 'demon'.");
+        if (!ids || !myUserId) {
+            console.warn("Missing instance/node/user.");
             return;
         }
 
         waitForElement(".status-pill", injectUI);
 
-        console.log("Scanner started. Instance:", instanceId, "User:", myUserId);
+        console.log(
+            "Scanner started:",
+            "instance", ids.instanceId,
+            "node", ids.nodeId
+        );
+
+        let cachedMatchNo = null;
 
         setInterval(async () => {
+            // Derive battle_id from instance (same mapping UI uses)
+            const battleId = ids.instanceId;
 
-            let totalDamage = 0;
+            cachedMatchNo =
+                cachedMatchNo ??
+                await getActiveMatchNo(battleId);
 
-            // Loop nodes
-            for (const node of nodes) {
+            const dmg = await fetchMyDamage(
+                ids.instanceId,
+                ids.nodeId,
+                cachedMatchNo,
+                myUserId
+            );
 
-                let nodeDamage = 0;
-
-                // Loop all 4 matches
-                for (const match of matches) {
-                    const dmg = await scan(node, match, instanceId, myUserId);
-                    nodeDamage += dmg;
-                }
-
-                totalDamage += nodeDamage;
-
-                console.log(
-                    `%cNode ${node} Total = ${nodeDamage.toLocaleString()}`,
-                    "color: cyan; font-weight: bold;"
-                );
-            }
-
-            // Update UI box
             const box = document.getElementById("myDamageTracker");
             if (box) {
-                box.innerText = `Total dmg dealt: ${totalDamage.toLocaleString()}`;
+                box.innerText =
+                    `Total dmg dealt: ${dmg.toLocaleString()}`;
 
-                if (totalDamage > 990000) {
-                    box.style.color = "#ff3b3b";   // red alert
-                } else {
-                    box.style.color = "#0f0";      // green normal
-                }
+                box.style.color =
+                    dmg > 990000 ? "#ff3b3b" : "#0f0";
             }
 
         }, 1000);
     }
 
     waitForElement('a.btn[href*="instance_id"]', startScanner);
-
 })();
 
 //PVP HP Bar
@@ -10655,7 +10681,7 @@ if (waveSection === "dead") {
     panel.style.cssText =
       "position:absolute;top:100%;left:0;margin-top:-1px;width:260px;" +
       "background:#0f121d;border:1px solid #303a60;border-radius:6px;" +
-      "padding:10px;display:none;max-height:300px;overflow-y:auto;";
+      "padding:10px;display:none;max-height:200px;overflow-y:auto;";
 
     const actions = document.createElement("div");
     actions.style.cssText = "display:flex;gap:10px;margin-bottom:10px;";
@@ -11896,7 +11922,6 @@ ${(() => {
 
 })();
 
-
 //event npc auto dialog
 (function () {
     if (!/event_page\.php$/.test(window.location.pathname)) return;
@@ -12672,6 +12697,835 @@ ${(() => {
   window.addEventListener('beforeunload', cleanup, { passive: true });
 })();
 
+//Custom auto farm
+(function () {
+       if (!vv.isOn('custom_auto_farm')) return;
+'use strict';
+ if (!/guild_dungeon_location\.php$/.test(window.location.pathname)) return;
+/* =====================================================================
+   LOGIC / ENGINE
+===================================================================== */
+
+function createCAFLogic() {
+
+  /* ================== STATE ================== */
+
+  const normalizeName = s => (s || '').trim().toLowerCase();
+
+  const selectedMonsters = new Set();
+  const monsterCaps = new Map();             // dgmid -> cap
+  const monsterPenalties = new Map();        // name -> skip count
+  const monsterPenaltyRemaining = new Map(); // name -> remaining number of times to skip THAT monster
+
+  let selectedAttack = 'slash';
+  let allowStaminaPotion = false;
+  let allowHpPotion = false;
+
+    // ✅ UI compatibility
+  let damageMode = 'cap';        // 'cap' | 'player'
+  let playerDamageValue = 0;
+
+  let running = false;
+  let paused = false;
+  let skipRemaining = 0;
+
+  const CAP_EPSILON = 10_000;
+
+  const ATTACKS = [
+    { id: 'slash',     stamina: 1,   skill: 0 },
+    { id: 'power',     stamina: 10,  skill: -1 },
+    { id: 'heroic',    stamina: 50,  skill: -2 },
+    { id: 'ultimate',  stamina: 100, skill: -3 },
+    { id: 'legendary', stamina: 200, skill: -4 }
+  ];
 
 
+const INSTANCE_ID = new URLSearchParams(location.search).get('instance_id');
+const LOCATION_ID = new URLSearchParams(location.search).get('location_id');
 
+
+  /* ================== HELPERS ================== */
+    const STORAGE_KEY = `caf:location:${LOCATION_ID}`;
+
+    function saveState() {
+        const state = {
+            selectedAttack,
+            damageMode,
+            playerDamageValue,
+            allowStaminaPotion,
+            allowHpPotion,
+            selectedMonsters: [...selectedMonsters],
+            monsterPenalties: [...monsterPenalties.entries()]
+        };
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function loadState() {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+
+        try {
+            const state = JSON.parse(raw);
+
+            if (state.selectedAttack) selectedAttack = state.selectedAttack;
+            if (state.damageMode) damageMode = state.damageMode;
+            if (typeof state.playerDamageValue === 'number')
+                playerDamageValue = state.playerDamageValue;
+
+            allowStaminaPotion = !!state.allowStaminaPotion;
+            allowHpPotion = !!state.allowHpPotion;
+
+            selectedMonsters.clear();
+            (state.selectedMonsters || []).forEach(m =>
+                                                   selectedMonsters.add(normalizeName(m))
+                                                  );
+
+            monsterPenalties.clear();
+            (state.monsterPenalties || []).forEach(([name, val]) =>
+                                                   monsterPenalties.set(name, val)
+                                                  );
+        } catch (e) {
+            console.warn('[CAF] Failed to load saved state', e);
+        }
+    }
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  function setStatus(msg) {
+    const bar = document.getElementById('caf-status-bar');
+    if (bar) bar.textContent = msg;
+  }
+
+  function getCurrentStamina() {
+    const el = document.getElementById('stamina_span');
+    return el ? Number(el.textContent.replace(/[^\d]/g, '')) || 0 : 0;
+  }
+
+  function getMyDamage(result) {
+    const uid = document.cookie.match(/demon=(\d+)/)?.[1];
+    return result?.leaderboard?.find(e => String(e.ID) === uid)?.DAMAGE_DEALT ?? 0;
+  }
+
+  function hasDamageStopped(prev, curr) {
+    return typeof prev === 'number' &&
+           typeof curr === 'number' &&
+           curr <= prev;
+  }
+
+  function downgradeAtkSmart(atkId, stamina) {
+    const ordered = [...ATTACKS].sort((a,b)=>b.stamina-a.stamina);
+    const start = ordered.findIndex(a => a.id === atkId);
+    if (start === -1) return null;
+    for (let i = start; i < ordered.length; i++) {
+      if (stamina >= ordered[i].stamina) return ordered[i];
+    }
+    return null;
+  }
+
+  /* ================== EXP CAP FETCH ================== */
+
+  async function fetchMonsterCap(dgmid) {
+    if (monsterCaps.has(dgmid)) {
+      return monsterCaps.get(dgmid);
+    }
+
+    setStatus('📊 Fetching EXP cap...');
+
+    const html = await fetch(
+      `/battle.php?dgmid=${dgmid}&instance_id=${INSTANCE_ID}`,
+      { credentials: 'include' }
+    ).then(r => r.text());
+
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    const block = [...doc.querySelectorAll('.stat-block')]
+      .find(b => b.querySelector('.label')?.textContent.trim() === 'EXP Cap');
+
+    const cap =
+      Number(
+        block?.querySelector('div')
+          ?.textContent.match(/([\d,]+)/)?.[1]
+          ?.replace(/,/g, '')
+      ) || null;
+
+    monsterCaps.set(dgmid, cap);
+    return cap;
+  }
+
+  /* ================== POTIONS ================== */
+
+  function getPotionInvId(name) {
+    return [...document.querySelectorAll('.potion-card')]
+      .find(c =>
+        c.querySelector('.potion-name span')
+          ?.textContent.trim().toLowerCase() === name
+      )?.dataset.invId || null;
+  }
+
+async function useStaminaPotion() {
+  if (!allowStaminaPotion) {
+    setStatus('⛔ Stamina potion disabled by user');
+    return false;
+  }
+
+  const invId = getPotionInvId('large stamina potion');
+  if (!invId) {
+    setStatus('⛔ No stamina potions left');
+    return false;
+  }
+
+  setStatus('🔋 Using stamina potion...');
+  await fetch('/use_item.php', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ inv_id: invId }).toString()
+  });
+
+  await sleep(1200);
+  setStatus('✅ Stamina restored. Resuming...');
+  return true;
+}
+
+async function useHpPotion() {
+  if (!allowHpPotion) {
+    setStatus('⛔ HP potion disabled by user');
+    return false;
+  }
+
+  const invId = getPotionInvId('full hp potion');
+  if (!invId) {
+    setStatus('⛔ No HP potions left');
+    return false;
+  }
+
+  setStatus('❤️ Using HP potion...');
+  await fetch('/user_heal_potion.php', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ inv_id: invId }).toString()
+  });
+
+  await sleep(800);
+  setStatus('❤️ HP restored. Resuming...');
+  return true;
+}
+
+  /* ================== JOIN ================== */
+
+  async function joinDungeonBattle(dgmid) {
+    const user_id = document.cookie.match(/demon=(\d+)/)?.[1];
+    if (!INSTANCE_ID || !user_id) return false;
+
+    const res = await fetch('/dungeon_join_battle.php', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ instance_id: INSTANCE_ID, dgmid, user_id }).toString()
+    });
+
+    const text = await res.text();
+    if (text.toLowerCase().includes('success')) {
+      await sleep(600);
+      return true;
+    }
+    return false;
+  }
+
+  async function attackMonster(dgmid, atk) {
+    const form = new FormData();
+    form.append('dgmid', dgmid);
+    form.append('instance_id', INSTANCE_ID);
+    form.append('skill_id', atk.skill);
+    form.append('stamina_cost', atk.stamina);
+
+    return fetch('damage.php', {
+      method: 'POST',
+      credentials: 'include',
+      body: form
+    }).then(r => r.json());
+  }
+
+  /* ================== MAIN LOOP ================== */
+
+ async function run() {
+  if (running) return;
+  running = true;
+  paused = false;
+  skipRemaining = 0;
+     // Initialize per-run penalty counters (IMPORTANT)
+     monsterPenaltyRemaining.clear();
+     for (const [name, value] of monsterPenalties.entries()) {
+         monsterPenaltyRemaining.set(name, value);
+     }
+
+  setStatus('▶️ Starting auto farm...');
+
+  const cards = [...document.querySelectorAll('.mon[data-name]')]
+    .filter(c => selectedMonsters.has(normalizeName(c.dataset.name)));
+
+  const totalMonsters = cards.length;
+
+  for (let i = 0; i < cards.length; i++) {
+    if (paused) break;
+
+    const card = cards[i];
+    const monsterName = card.dataset.name;
+    const monsterIndex = i + 1;
+
+    /* ================== PENALTY SKIP ================== */
+
+      const monsterKey = normalizeName(monsterName);
+      const remainingPenalty =
+            monsterPenaltyRemaining.get(monsterKey) || 0;
+
+      if (remainingPenalty > 0) {
+          monsterPenaltyRemaining.set(monsterKey, remainingPenalty - 1);
+
+          setStatus(
+              `⚠️ Skipping penalized ${monsterName} ` +
+              `(${monsterIndex}/${totalMonsters}) – ` +
+              `${remainingPenalty - 1} left`
+          );
+
+          continue;
+      }
+
+
+    /* ================== JOIN BATTLE ================== */
+
+    const dgmid =
+      card.querySelector('.qol-pick')?.dataset.mid ||
+      card.querySelector('a[href*="dgmid="]')
+        ?.href.match(/dgmid=(\d+)/)?.[1];
+
+    if (!dgmid) continue;
+    if (!await joinDungeonBattle(dgmid)) continue;
+
+    /* ================== DETERMINE CAP ================== */
+
+    const cap =
+      damageMode === 'player'
+        ? playerDamageValue
+        : await fetchMonsterCap(dgmid);
+
+    let damage = 0;
+    let lastDamage = -1;
+
+    /* ================== ATTACK LOOP ================== */
+
+    while (!paused) {
+      lastDamage = damage;
+
+      const baseAttack =
+        ATTACKS.find(a => a.id === selectedAttack) || ATTACKS[0];
+
+      let atk = downgradeAtkSmart(baseAttack.id, getCurrentStamina());
+
+      /* --- Local stamina exhaustion --- */
+      if (!atk) {
+        setStatus(
+          `🔋 Using stamina potion on ${monsterName} ` +
+          `(${monsterIndex}/${totalMonsters})`
+        );
+        if (!await useStaminaPotion()) break;
+        continue;
+      }
+
+      const result = await attackMonster(dgmid, atk);
+        /* --- Server death error (no retaliation object) --- */
+        if (
+            result?.status === 'error' &&
+            typeof result.message === 'string' &&
+            result.message.toLowerCase().includes('dead')
+        ) {
+            setStatus(
+                `❤️ You died on ${monsterName} ` +
+                `(${monsterIndex}/${totalMonsters})`
+            );
+            if (!await useHpPotion()) break;
+            continue;
+        }
+
+      /* --- Server stamina error --- */
+      if (
+        result?.status === 'error' &&
+        typeof result.message === 'string' &&
+        result.message.toLowerCase().includes('stamina')
+      ) {
+        setStatus(
+          `🔋 Server stamina error on ${monsterName} ` +
+          `(${monsterIndex}/${totalMonsters})`
+        );
+        if (!await useStaminaPotion()) break;
+        continue;
+      }
+
+      /* --- HP retaliation (null-safe) --- */
+      const hpAfter = result?.retaliation?.user_hp_after;
+      if (typeof hpAfter === 'number' && hpAfter <= 0) {
+        setStatus(
+          `❤️ Using HP potion on ${monsterName} ` +
+          `(${monsterIndex}/${totalMonsters})`
+        );
+        if (!await useHpPotion()) break;
+        continue;
+      }
+
+      damage = getMyDamage(result);
+
+      /* ================== STATUS ================== */
+
+      setStatus(
+        `⚔️ Attacking ${monsterName} ` +
+        `(${monsterIndex}/${totalMonsters}) – ` +
+        `${damage.toLocaleString()} / ${cap?.toLocaleString() ?? '∞'}`
+      );
+
+      /* ================== EXIT CONDITIONS ================== */
+
+      if (typeof cap === 'number' && damage >= cap) {
+        setStatus(
+          `✅ Cap reached on ${monsterName} ` +
+          `(${monsterIndex}/${totalMonsters}). Moving on…`
+        );
+        break;
+      }
+
+      if (
+        hasDamageStopped(lastDamage, damage) &&
+        typeof cap === 'number' &&
+        damage >= cap - CAP_EPSILON
+      ) {
+        setStatus(
+          `✅ Monster capped on ${monsterName} ` +
+          `(${monsterIndex}/${totalMonsters}). Moving on…`
+        );
+        break;
+      }
+
+      if (hasDamageStopped(lastDamage, damage)) {
+        setStatus(
+          `✅ ${monsterName} defeated ` +
+          `(${monsterIndex}/${totalMonsters}). Moving on…`
+        );
+        break;
+      }
+
+      await sleep(300);
+    }
+  }
+
+  running = false;
+  if (!paused) {
+    setStatus('🏁 Run completed');
+  }
+}
+loadState();
+  /* ================== PUBLIC API ================== */
+
+return {
+  ATTACKS,
+  start: run,
+  pause: () => { paused = true; setStatus('⏸️ Paused'); },
+
+setAttack: id => {
+  selectedAttack = id;
+  saveState();
+},
+
+setDamageMode: m => {
+  damageMode = m;
+  saveState();
+},
+
+setPlayerDamage: v => {
+  playerDamageValue = Number(v) || 0;
+  saveState();
+},
+
+toggleMonster: (n, v) => {
+  v ? selectedMonsters.add(normalizeName(n))
+    : selectedMonsters.delete(normalizeName(n));
+  saveState();
+},
+
+setMonsterPenalty: (n, v) => {
+  monsterPenalties.set(normalizeName(n), Number(v) || 0);
+  saveState();
+},
+
+setUseStaminaPotion: v => {
+  allowStaminaPotion = !!v;
+  saveState();
+},
+
+setUseHpPotion: v => {
+  allowHpPotion = !!v;
+  saveState();
+},
+
+    clearMonsterPenalties: () => monsterPenalties.clear(),
+
+  /* ✅ ADD THESE GETTERS BELOW */
+
+  getSelectedMonsters: () => [...selectedMonsters],
+  getSelectedAttack: () => selectedAttack,
+  getDamageMode: () => damageMode,
+  getPlayerDamage: () => playerDamageValue,
+  getMonsterPenalties: () => new Map(monsterPenalties),
+  isStaminaPotionAllowed: () => allowStaminaPotion,
+  isHpPotionAllowed: () => allowHpPotion
+};
+}
+
+/* =====================================================================
+   UI Interface
+===================================================================== */
+
+function createCAFUI(caf) {
+
+  const normalize = s => (s||'').trim().toLowerCase();
+
+  function findWrapper() {
+    return [...document.querySelectorAll('div')]
+      .find(d =>
+        d.style?.background?.includes('15, 18, 29') &&
+        d.querySelector('.qol-status') &&
+        d.querySelector('.qol-filter-row')
+      );
+  }
+
+  function injectUI() {
+    const wrapper = findWrapper();
+    if (!wrapper || document.getElementById('custom-auto-farm')) return false;
+
+    const root = document.createElement('div');
+    root.id = 'custom-auto-farm';
+    root.style.marginTop = '10px';
+
+    root.innerHTML = `
+<div style="background:#12162a;border:1px solid #303a60;border-radius:8px;overflow:hidden;">
+
+  <!-- HEADER (clickable) -->
+  <div id="caf-header"
+       style="
+         padding:8px 10px;
+         font-weight:600;
+         display:flex;
+         justify-content:space-between;
+         align-items:center;
+         cursor:pointer;
+         background:#0f121d;
+       ">
+    <span>⚙️ Custom Auto Farm</span>
+    <span id="caf-toggle-icon" style="transition:transform .2s;">▼</span>
+  </div>
+
+  <!-- COLLAPSIBLE CONTENT -->
+  <div id="caf-content" style="padding:10px;">
+
+    <!-- EVERYTHING THAT WAS ALREADY INSIDE GOES HERE -->
+
+<div class="caf-dd-wrap" style="position:relative;margin-bottom:10px;">
+  <button id="caf-monster-btn" class="qol-btn secondary" style="width:260px">
+    🎯 Select Monsters
+  </button>
+  <div id="caf-monster-dropdown"
+       style="display:none;position:absolute;top:100%;
+              background:#0f121d;border:1px solid #303a60;
+              padding:8px;width:260px;z-index:10;">
+  </div>
+</div>
+
+
+<div class="caf-dd-wrap" style="position:relative;margin-bottom:10px;">
+  <button id="caf-attack-btn" class="qol-btn secondary" style="width:260px">
+    ⚔️ Select Attack
+  </button>
+  <div id="caf-attack-dropdown"
+       style="display:none;position:absolute;top:100%;
+              background:#0f121d;border:1px solid #303a60;
+              padding:8px;width:260px;z-index:10;">
+
+      ${caf.ATTACKS.map(a =>
+        `<label style="display:flex;gap:6px;font-size:13px;">
+          <input type="radio" name="caf-attack" data-attack="${a.id}" ${a.id==='slash'?'checked':''}>
+          ${a.label} (${a.stamina})
+        </label>`
+      ).join('')}
+    </div>
+  </div>
+
+ <div style="margin-bottom:10px;font-size:13px;">
+  <div style="font-weight:600;margin-bottom:6px;">
+    Damage per mob
+  </div>
+
+  <label>
+    <input type="radio" name="caf-dmg" value="cap" checked>
+    CAP
+  </label>
+
+  <label style="margin-left:12px">
+    <input type="radio" name="caf-dmg" value="player">
+    Player Choice
+  </label>
+
+  <input id="caf-player-dmg"
+         type="number"
+         style="display:none;margin-top:6px;width:100%;">
+</div>
+<div style="margin-bottom:10px;font-size:13px;">
+  <div style="font-weight:600;font-size:13px;margin-bottom:6px;">
+    🧪 Potion Usage
+  </div>
+
+  <label style="display:block;">
+    <input type="checkbox" id="caf-use-lsp">
+    Use unlimited LSP
+  </label>
+
+  <label style="display:block;margin-top:4px;">
+    <input type="checkbox" id="caf-use-hp">
+    Use unlimited HP Pot
+  </label>
+</div>
+
+    <div style="margin-bottom:10px;">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px;">
+        ⚠️ Monster Penalties
+      </div>
+      <div id="caf-penalties"
+           style="display:flex;flex-direction:column;gap:8px;flex-wrap: wrap;align-content: flex-start;">
+      </div>
+    </div>
+
+  <div style="display:flex;gap:8px;">
+    <button id="caf-start" class="qol-btn primary">▶ Start</button>
+    <button id="caf-pause" class="qol-btn secondary">⏸ Pause</button>
+  </div>
+  <div id="caf-status-wrap" style="margin-top:10px;"></div>
+</div>
+  </div>
+</div>
+`;
+
+    wrapper.querySelector('.qol-status').after(root);
+      // Create status bar
+const statusWrap = root.querySelector('#caf-status-wrap');
+const statusBar = document.createElement('div');
+
+statusBar.id = 'caf-status-bar';
+statusBar.textContent = 'Idle';
+
+statusBar.style.cssText =
+  'padding:6px 10px;' +
+  'background:#12162a;' +
+  'border:1px solid #303a60;' +
+  'color:#8aa2ff;' +
+  'font-size:13px;' +
+  'border-radius:6px;';
+
+statusWrap.appendChild(statusBar);
+
+
+    // Collapse by default
+      const content = root.querySelector('#caf-content');
+      const icon = root.querySelector('#caf-toggle-icon');
+
+      if (content && icon) {
+          content.style.display = 'none';
+          icon.style.transform = 'rotate(-90deg)';
+      }
+
+    populateMonsters();
+    populatePenaltyInputs();
+ // Restore UI from CAF state
+
+const selected = new Set(caf.getSelectedMonsters());
+
+document.querySelectorAll('[data-monster]').forEach(cb => {
+  cb.checked = selected.has(cb.dataset.monster);
+});
+
+// restore attack
+const atk = document.querySelector(
+  `[data-attack="${caf.getSelectedAttack()}"]`
+);
+if (atk) atk.checked = true;
+
+// restore damage mode
+document.querySelectorAll('[name="caf-dmg"]').forEach(r => {
+  r.checked = r.value === caf.getDamageMode();
+});
+
+// restore player damage
+document.getElementById('caf-player-dmg').value =
+  caf.getPlayerDamage();
+
+// restore potion checkboxes
+document.getElementById('caf-use-lsp').checked =
+  caf.isStaminaPotionAllowed();
+
+document.getElementById('caf-use-hp').checked =
+  caf.isHpPotionAllowed();
+
+// restore penalties
+const penalties = caf.getMonsterPenalties();
+document.querySelectorAll('[data-penalty]').forEach(inp => {
+  inp.value = penalties.get(inp.dataset.penalty) || 0;
+});
+
+
+      const lspCheckbox = root.querySelector('#caf-use-lsp');
+const hpCheckbox  = root.querySelector('#caf-use-hp');
+
+// ✅ Optional defaults (change if you want)
+//lspCheckbox.checked = false;
+//hpCheckbox.checked  = false;
+
+// ✅ Initialize CAF state
+//caf.setUseStaminaPotion(lspCheckbox.checked);
+//caf.setUseHpPotion(hpCheckbox.checked);
+
+// ✅ React to changes
+lspCheckbox.addEventListener('change', e => {
+  caf.setUseStaminaPotion(e.target.checked);
+});
+
+hpCheckbox.addEventListener('change', e => {
+  caf.setUseHpPotion(e.target.checked);
+});
+
+    return true;
+  }
+
+  function enableCollapse() {
+        const header  = document.getElementById('caf-header');
+        const content = document.getElementById('caf-content');
+        const icon    = document.getElementById('caf-toggle-icon');
+
+        if (!header || !content) return;
+
+        header.addEventListener('click', () => {
+            const collapsed = content.style.display === 'none';
+
+            content.style.display = collapsed ? 'block' : 'none';
+            icon.style.transform = collapsed ? 'rotate(0deg)' : 'rotate(-90deg)';
+        });
+    }
+
+  function enableDropdownMouseLeave() {
+      document.querySelectorAll('.caf-dd-wrap').forEach(wrap => {
+          wrap.addEventListener('mouseleave', () => {
+              setTimeout(() => {
+                  const dd = wrap.querySelector('div[id$="-dropdown"]');
+                  if (dd) dd.style.display = 'none';
+              }, 100);
+          });
+      });
+  }
+
+  function populateMonsters() {
+    const dd = document.getElementById('caf-monster-dropdown');
+    const names = [...new Set(
+      [...document.querySelectorAll('.mon[data-name]')]
+        .map(m => normalize(m.dataset.name))
+    )];
+
+    dd.innerHTML = names.map(n => `
+      <label style="font-size:13px;display:flex;gap:6px;align-items:center;">
+        <input type="checkbox" data-monster="${n}">
+        ${n.replace(/\b\w/g,c=>c.toUpperCase())}
+      </label>
+    `).join('');
+  }
+
+  function populatePenaltyInputs() {
+      const wrap = document.getElementById('caf-penalties');
+      if (!wrap) return;
+
+      const monsters = [...new Set(
+          [...document.querySelectorAll('.mon[data-name]')]
+          .map(m => normalize(m.dataset.name))
+      )];
+
+      wrap.innerHTML = monsters.map(name => `
+    <div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;">
+      <span>${name.replace(/\b\w/g,c=>c.toUpperCase())}</span>
+      <input type="number"
+             min="0"
+             value="0"
+             data-penalty="${name}"
+             style="width:64px;text-align:center;">
+    </div>
+  `).join('');
+  }
+
+  document.addEventListener('click', e => {
+if (e.target.id === 'caf-start') {
+  caf.start();
+  const sb = document.getElementById('caf-status-bar');
+  if (sb) sb.textContent = 'Running auto farm...';
+}
+
+if (e.target.id === 'caf-pause') {
+  caf.pause();
+  const sb = document.getElementById('caf-status-bar');
+  if (sb) sb.textContent = 'Paused';
+}
+
+
+    if (e.target.id === 'caf-monster-btn')
+      document.getElementById('caf-monster-dropdown').style.display = 'block';
+
+    if (e.target.id === 'caf-attack-btn')
+      document.getElementById('caf-attack-dropdown').style.display = 'block';
+
+    if (e.target.matches('[data-monster]'))
+      caf.toggleMonster(e.target.dataset.monster, e.target.checked);
+
+    if (e.target.matches('[data-attack]'))
+      caf.setAttack(e.target.dataset.attack);
+
+    if (e.target.name === 'caf-dmg') {
+      caf.setDamageMode(e.target.value);
+      document.getElementById('caf-player-dmg').style.display =
+        e.target.value === 'player' ? 'block' : 'none';
+    }
+  });
+
+  document.addEventListener('input', e => {
+    if (e.target.id === 'caf-player-dmg')
+      caf.setPlayerDamage(Number(e.target.value));
+  });
+
+document.addEventListener('input', e => {
+  if (e.target.matches('[data-penalty]')) {
+    const name  = e.target.dataset.penalty;
+    const value = Number(e.target.value) || 0;
+
+    caf.setMonsterPenalty(name, value);
+  }
+});
+
+  const wait = setInterval(()=>{
+
+if (injectUI()) {
+  enableDropdownMouseLeave();
+  enableCollapse();
+  clearInterval(wait);
+}
+
+; },300);
+}
+
+/* ===================================================================== */
+
+const caf = createCAFLogic();
+createCAFUI(caf);
+
+})();
