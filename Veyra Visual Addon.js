@@ -12698,6 +12698,18 @@ ${(() => {
 })();
 
 //Custom auto farm
+// ==UserScript==
+// @name         custom auto farm
+// @namespace    https://github.com/Daregon-sh/veyra
+// @version      3.17.2
+// @description  sidebars visual integration
+// @author       Daregon
+// @match        https://demonicscans.org/*
+// @grant        GM_xmlhttpRequest
+// @connect      demonicscans.org
+// @license MIT
+// ==/UserScript==
+
 (function() {
     'use strict';
 
@@ -12719,12 +12731,7 @@ ${(() => {
         const monsterPenaltyRemaining = new Map(); // name -> remaining number of times to skip THAT monster
         const monsterPlayerCaps = new Map(); // name -> custom cap
 
-        const CALIB_KEY = 'caf:skill_calibration';
-        const CRIT_MULT_MAX = 2.2;
 
-        let skillCalib = {};        // skillId -> { avgDmg, hits }
-        let critMultiplier = 2.0;
-        let critHits = 0;
 
         let selectedAttack = 'slash';
         let allowStaminaPotion = false;
@@ -12772,31 +12779,7 @@ ${(() => {
         const LOCATION_ID = new URLSearchParams(location.search).get('location_id');
 
 
-        (function loadCalibration() {
-            try {
-                const raw = localStorage.getItem(CALIB_KEY);
-                if (!raw) return;
-                const parsed = JSON.parse(raw);
-                if (parsed.skillCalib) skillCalib = parsed.skillCalib;
-                if (parsed.crit) critMultiplier = parsed.crit;
-                if (parsed.critHits) critHits = parsed.critHits;
-            } catch {}
-        })();
 
-        function safestFittingAttack(currentDmg, cap, preferredAtk, tolerance = 0) {
-            return [...ATTACKS]
-                .filter(a => a.stamina <= preferredAtk.stamina)
-                .sort((a, b) => b.stamina - a.stamina)
-                .find(a => {
-                const normal = estimatedAvgDmg(a);
-                if (normal < 0) return false;
-                const worst = Math.floor(normal * Math.min(critMultiplier, CRIT_MULT_MAX));
-                return (
-                    currentDmg + normal <= cap &&
-                    currentDmg + worst <= cap + tolerance
-                );
-            }) || null;
-        }
 
 
         /* ================== HELPERS ================== */
@@ -12986,87 +12969,6 @@ ${(() => {
             return false; // timed out
         }
 
-        function estimateNextHitDamage(lastDamage, prevDamage) {
-            if (typeof lastDamage !== 'number' || typeof prevDamage !== 'number') return null;
-            return lastDamage - prevDamage;
-        }
-
-        function saveCalibration() {
-            try {
-                localStorage.setItem(
-                    CALIB_KEY,
-                    JSON.stringify({ skillCalib, crit: critMultiplier, critHits })
-                );
-            } catch {}
-        }
-
-        function updateCalibration(hitDmg, atk) {
-            if (!hitDmg || !atk) return;
-
-            const key = String(atk.skill);
-            const entry = skillCalib[key];
-
-            if (!entry) {
-                skillCalib[key] = { avgDmg: hitDmg, hits: 1 };
-                saveCalibration();
-                return;
-            }
-
-            const ratio = hitDmg / entry.avgDmg;
-
-            // Ignore poison / bleed noise
-            if (ratio < 0.3) return;
-
-            // Monster type changed — reset this skill
-            if (ratio > 5) {
-                skillCalib[key] = { avgDmg: hitDmg, hits: 1 };
-                saveCalibration();
-                return;
-            }
-
-            const isCrit = ratio > 1.3;
-
-            if (isCrit) {
-                const newMult = Math.min(ratio, CRIT_MULT_MAX);
-                critMultiplier =
-                    critHits === 0
-                    ? newMult
-                : critMultiplier * 0.9 + newMult * 0.1;
-                critHits++;
-            } else {
-                entry.avgDmg = entry.avgDmg * 0.85 + hitDmg * 0.15;
-                entry.hits++;
-            }
-
-            saveCalibration();
-        }
-
-        function estimatedAvgDmg(atk) {
-            const entry = skillCalib[String(atk.skill)];
-            if (entry) return entry.avgDmg;
-
-            // Derive DPS from known skills
-            let total = 0;
-            let weight = 0;
-
-            for (const [k, v] of Object.entries(skillCalib)) {
-                const skill = ATTACKS.find(a => String(a.skill) === k);
-                if (!skill || skill.stamina <= 0) continue;
-                total += (v.avgDmg / skill.stamina) * v.hits;
-                weight += v.hits;
-            }
-
-            if (!weight) return -1;
-
-            const avgPerStam = total / weight;
-            return Math.floor(avgPerStam * atk.stamina * 1.10); // +10% safety
-        }
-
-        function predictWorstCase(atk) {
-            const avg = estimatedAvgDmg(atk);
-            if (avg < 0) return -1;
-            return Math.floor(avg * Math.min(critMultiplier, CRIT_MULT_MAX));
-        }
 
         /* ================== EXP CAP FETCH ================== */
 
@@ -13343,45 +13245,6 @@ ${(() => {
 
                     let atk = downgradeAtkSmart(baseAttack.id, getCurrentStamina());
 
-                    // ── SOFT‑CAP PROTECTION ─────────────────────
-                    if (typeof cap === 'number' && cap > 0) {
-                        const remaining = cap - damage;
-                        if (remaining <= 0) break;
-
-                        const tolerance = 500_000; // regular mobs
-
-                        const normalEst = estimatedAvgDmg(atk);
-                        const worstCase = predictWorstCase(atk);
-
-                       if (
-                           normalEst >= 0 &&
-                           worstCase >= 0 &&
-                           (
-                               damage + normalEst > cap ||
-                               damage + worstCase > cap + tolerance
-                           )
-                       ) {
-                           const safe = safestFittingAttack(damage, cap, atk, tolerance);
-
-                        if (safe) {
-                            atk = safe;
-                        } else {
-                            const slash = ATTACKS.find(a => a.id === 'slash');
-
-                            if (!finalSlashUsed) {
-                                atk = slash;
-                                finalSlashUsed = true; // ✅ allow only once
-                            } else {
-                                break; // ✅ do not overshoot twice
-                            }
-                        }
-                       }
-
-                    }
-                    // ────────────────────────────────────────────
-
-
-
                     /* --- Local stamina exhaustion --- */
                     if (!atk) {
                         // ✅ Do NOT use stamina potion here
@@ -13472,10 +13335,6 @@ ${(() => {
 
                     damage = getMyDamage(result);
 
-                    const hit = result?.totaldmgdealt;
-                    if (typeof hit === 'number' && hit > 0) {
-                        updateCalibration(hit, atk);
-                    }
 
 
                     /* ================== STATUS ================== */
@@ -13496,17 +13355,6 @@ ${(() => {
                         break;
                     }
 
-                    if (
-                        hasDamageStopped(lastDamage, damage) &&
-                        typeof cap === 'number' &&
-                        damage >= cap - CAP_EPSILON
-                    ) {
-                        setStatus(
-                            `✅ Monster capped on ${monsterName} ` +
-                            `(${monsterIndex}/${totalMonsters}). Moving on…`
-                        );
-                        break;
-                    }
 
                     if (hasDamageStopped(lastDamage, damage)) {
                         setStatus(
