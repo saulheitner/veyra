@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.17.1
+// @version      2.17.2
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -12698,515 +12698,938 @@ ${(() => {
 })();
 
 //Custom auto farm
-(function () {
-       if (!vv.isOn('custom_auto_farm')) return;
-'use strict';
- if (!/guild_dungeon_location\.php$/.test(window.location.pathname)) return;
-/* =====================================================================
-   LOGIC / ENGINE
-===================================================================== */
+(function() {
+    'use strict';
 
-function createCAFLogic() {
+    /* =====================================================================
+       LOGIC / ENGINE
+    ===================================================================== */
 
-  /* ================== STATE ================== */
+    function createCAFLogic() {
 
-  const normalizeName = s => (s || '').trim().toLowerCase();
+        /* ================== STATE ================== */
 
-  const selectedMonsters = new Set();
-  const monsterCaps = new Map();             // dgmid -> cap
-  const monsterPenalties = new Map();        // name -> skip count
-  const monsterPenaltyRemaining = new Map(); // name -> remaining number of times to skip THAT monster
+        const normalizeName = s => (s || '').trim().toLowerCase();
+        const STAMINA_POTION_EXP_LIMIT = 0.80; // 80%
+        const STAMINA_POTION_RESTORE = 5000;
 
-  let selectedAttack = 'slash';
-  let allowStaminaPotion = false;
-  let allowHpPotion = false;
+        const selectedMonsters = new Set();
+        const monsterCaps = new Map(); // dgmid -> cap
+        const monsterPenalties = new Map(); // name -> skip count
+        const monsterPenaltyRemaining = new Map(); // name -> remaining number of times to skip THAT monster
+        const monsterPlayerCaps = new Map(); // name -> custom cap
 
-    // ✅ UI compatibility
-  let damageMode = 'cap';        // 'cap' | 'player'
-  let playerDamageValue = 0;
+        const CALIB_KEY = 'caf:skill_calibration';
+        const CRIT_MULT_MAX = 2.2;
 
-  let running = false;
-  let paused = false;
-  let skipRemaining = 0;
+        let skillCalib = {};        // skillId -> { avgDmg, hits }
+        let critMultiplier = 2.0;
+        let critHits = 0;
 
-  const CAP_EPSILON = 10_000;
+        let selectedAttack = 'slash';
+        let allowStaminaPotion = false;
+        let allowHpPotion = false;
 
-  const ATTACKS = [
-    { id: 'slash',     stamina: 1,   skill: 0 },
-    { id: 'power',     stamina: 10,  skill: -1 },
-    { id: 'heroic',    stamina: 50,  skill: -2 },
-    { id: 'ultimate',  stamina: 100, skill: -3 },
-    { id: 'legendary', stamina: 200, skill: -4 }
-  ];
+        // ✅ UI compatibility
+        let damageMode = 'exp';// 'exp' | 'global' | 'monster'
+        let playerDamageValue = 0;
+
+        let running = false;
+        let paused = false;
+        let skipRemaining = 0;
+
+        const CAP_EPSILON = 10_000;
+
+        const ATTACKS = [{
+                id: 'slash',
+                stamina: 1,
+                skill: 0
+            },
+            {
+                id: 'power',
+                stamina: 10,
+                skill: -1
+            },
+            {
+                id: 'heroic',
+                stamina: 50,
+                skill: -2
+            },
+            {
+                id: 'ultimate',
+                stamina: 100,
+                skill: -3
+            },
+            {
+                id: 'legendary',
+                stamina: 200,
+                skill: -4
+            }
+        ];
 
 
-const INSTANCE_ID = new URLSearchParams(location.search).get('instance_id');
-const LOCATION_ID = new URLSearchParams(location.search).get('location_id');
+        const INSTANCE_ID = new URLSearchParams(location.search).get('instance_id');
+        const LOCATION_ID = new URLSearchParams(location.search).get('location_id');
 
 
-  /* ================== HELPERS ================== */
-    const STORAGE_KEY = `caf:location:${LOCATION_ID}`;
+        (function loadCalibration() {
+            try {
+                const raw = localStorage.getItem(CALIB_KEY);
+                if (!raw) return;
+                const parsed = JSON.parse(raw);
+                if (parsed.skillCalib) skillCalib = parsed.skillCalib;
+                if (parsed.crit) critMultiplier = parsed.crit;
+                if (parsed.critHits) critHits = parsed.critHits;
+            } catch {}
+        })();
 
-    function saveState() {
-        const state = {
-            selectedAttack,
-            damageMode,
-            playerDamageValue,
-            allowStaminaPotion,
-            allowHpPotion,
-            selectedMonsters: [...selectedMonsters],
-            monsterPenalties: [...monsterPenalties.entries()]
+        function safestFittingAttack(currentDmg, cap, preferredAtk, tolerance = 0) {
+            return [...ATTACKS]
+                .filter(a => a.stamina <= preferredAtk.stamina)
+                .sort((a, b) => b.stamina - a.stamina)
+                .find(a => {
+                const normal = estimatedAvgDmg(a);
+                if (normal < 0) return false;
+                const worst = Math.floor(normal * Math.min(critMultiplier, CRIT_MULT_MAX));
+                return (
+                    currentDmg + normal <= cap &&
+                    currentDmg + worst <= cap + tolerance
+                );
+            }) || null;
+        }
+
+
+        /* ================== HELPERS ================== */
+        const STORAGE_KEY = `caf:location:${LOCATION_ID}`;
+
+        function saveState() {
+            const state = {
+                selectedAttack,
+                damageMode,
+                playerDamageValue,
+                allowStaminaPotion,
+                allowHpPotion,
+                selectedMonsters: [...selectedMonsters],
+                monsterPenalties: [...monsterPenalties.entries()],
+                monsterPlayerCaps: [...monsterPlayerCaps.entries()],
+
+            };
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        }
+
+        function loadState() {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return;
+
+            try {
+                const state = JSON.parse(raw);
+
+                if (state.selectedAttack) selectedAttack = state.selectedAttack;
+                if (state.damageMode) damageMode = state.damageMode;
+                if (typeof state.playerDamageValue === 'number')
+                    playerDamageValue = state.playerDamageValue;
+
+                allowStaminaPotion = !!state.allowStaminaPotion;
+                allowHpPotion = !!state.allowHpPotion;
+
+                selectedMonsters.clear();
+                (state.selectedMonsters || []).forEach(m =>
+                    selectedMonsters.add(normalizeName(m))
+                );
+
+                monsterPenalties.clear();
+                (state.monsterPenalties || []).forEach(([name, val]) =>
+                    monsterPenalties.set(name, val)
+                );
+
+                monsterPlayerCaps.clear();
+                (state.monsterPlayerCaps || []).forEach(([name, val]) =>
+                   monsterPlayerCaps.set(name, Number(val) || 0)
+                );
+
+
+            } catch (e) {
+                console.warn('[CAF] Failed to load saved state', e);
+            }
+        }
+
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+        function setStatus(msg) {
+            const bar = document.getElementById('caf-status-bar');
+            if (bar) bar.textContent = msg;
+        }
+
+        let cachedMaxHp = null;
+
+        function getMaxHpOnce() {
+            if (cachedMaxHp !== null) return cachedMaxHp;
+
+            const text = document.querySelector('.topbar-hp-wrapper .hp-text')?.textContent;
+            const match = text?.match(/\/\s*([\d,]+)/);
+
+            if (match) {
+                cachedMaxHp = Number(match[1].replace(/,/g, ''));
+            }
+
+            return cachedMaxHp;
+        }
+
+        function getExpPercent() {
+            const expText = document.querySelector('.gtb-exp-top span:last-child')?.textContent;
+            if (!expText) return 0;
+
+            const match = expText.match(/([\d,]+)\s*\/\s*([\d,]+)/);
+            if (!match) return 0;
+
+            const cur = Number(match[1].replace(/,/g, ''));
+            const max = Number(match[2].replace(/,/g, ''));
+            return max ? cur / max : 0;
+        }
+
+        function getCurrentStamina() {
+            const el = document.getElementById('stamina_span');
+            return el ? Number(el.textContent.replace(/[^\d]/g, '')) || 0 : 0;
+        }
+
+        function getMyDamage(result) {
+            const uid = document.cookie.match(/demon=(\d+)/)?.[1];
+            return result?.leaderboard?.find(e => String(e.ID) === uid)?.DAMAGE_DEALT ?? 0;
+        }
+
+        function hasDamageStopped(prev, curr) {
+            return typeof prev === 'number' &&
+                typeof curr === 'number' &&
+                curr <= prev;
+        }
+
+        function downgradeAtkSmart(atkId, stamina) {
+            const ordered = [...ATTACKS].sort((a, b) => b.stamina - a.stamina);
+            const start = ordered.findIndex(a => a.id === atkId);
+            if (start === -1) return null;
+            for (let i = start; i < ordered.length; i++) {
+                if (stamina >= ordered[i].stamina) return ordered[i];
+            }
+            return null;
+        }
+
+        function updateHpUI(currentHp, maxHp) {
+            if (typeof currentHp !== 'number' || typeof maxHp !== 'number') return;
+
+            const wrapper = document.querySelector('.topbar-hp-wrapper');
+            if (!wrapper) return;
+
+            // Update text
+            const hpText = wrapper.querySelector('.hp-text');
+            if (hpText) {
+                hpText.textContent = `💚 ${currentHp.toLocaleString()} / ${maxHp.toLocaleString()} HP`;
+            }
+
+            // Update bar fill
+            const fill = [...wrapper.querySelectorAll('.res-fill')]
+            .find(el => !el.classList.contains('mana'));
+
+            if (fill) {
+                const percent = Math.max(0, Math.min(100, (currentHp / maxHp) * 100));
+                fill.style.width = `${percent}%`;
+            }
+        }
+
+        function updateStaminaUI(currentStamina) {
+            if (typeof currentStamina !== 'number') return;
+
+            const staminaSpan = document.getElementById('stamina_span');
+            if (staminaSpan) {
+                staminaSpan.textContent = currentStamina.toLocaleString();
+            }
+        }
+
+        function applyLocalStaminaRestore(amount) {
+            const span = document.getElementById('stamina_span');
+            if (!span) return;
+
+            const text = span.textContent.replace(/[^\d]/g, '');
+            const current = Number(text) || 0;
+
+            // Try to read max stamina from DOM
+            const parentText = span.parentElement?.textContent || '';
+            const maxMatch = parentText.match(/\/\s*([\d,]+)/);
+            const max = maxMatch ? Number(maxMatch[1].replace(/,/g, '')) : Infinity;
+
+            const next = Math.min(current + amount, max);
+
+            span.textContent = next.toLocaleString();
+        }
+
+        function getDamageFromMonsterCard(card) {
+            const dmgEl = card.querySelector('.statpill .k')?.textContent?.trim() === 'dmg'
+            ? card.querySelector('.statpill .v')
+            : [...card.querySelectorAll('.statpill')]
+            .find(p => p.querySelector('.k')?.textContent?.trim() === 'dmg')
+            ?.querySelector('.v');
+
+            if (!dmgEl) return null;
+
+            return Number(dmgEl.textContent.replace(/[^\d]/g, '')) || 0;
+        }
+
+        async function waitForStamina(min = 1, timeoutMs = 30000) {
+            const start = Date.now();
+
+            while (Date.now() - start < timeoutMs) {
+                const stam = getCurrentStamina();
+                if (stam >= min) return true;
+                await sleep(1000);
+            }
+
+            return false; // timed out
+        }
+
+        function estimateNextHitDamage(lastDamage, prevDamage) {
+            if (typeof lastDamage !== 'number' || typeof prevDamage !== 'number') return null;
+            return lastDamage - prevDamage;
+        }
+
+        function saveCalibration() {
+            try {
+                localStorage.setItem(
+                    CALIB_KEY,
+                    JSON.stringify({ skillCalib, crit: critMultiplier, critHits })
+                );
+            } catch {}
+        }
+
+        function updateCalibration(hitDmg, atk) {
+            if (!hitDmg || !atk) return;
+
+            const key = String(atk.skill);
+            const entry = skillCalib[key];
+
+            if (!entry) {
+                skillCalib[key] = { avgDmg: hitDmg, hits: 1 };
+                saveCalibration();
+                return;
+            }
+
+            const ratio = hitDmg / entry.avgDmg;
+
+            // Ignore poison / bleed noise
+            if (ratio < 0.3) return;
+
+            // Monster type changed — reset this skill
+            if (ratio > 5) {
+                skillCalib[key] = { avgDmg: hitDmg, hits: 1 };
+                saveCalibration();
+                return;
+            }
+
+            const isCrit = ratio > 1.3;
+
+            if (isCrit) {
+                const newMult = Math.min(ratio, CRIT_MULT_MAX);
+                critMultiplier =
+                    critHits === 0
+                    ? newMult
+                : critMultiplier * 0.9 + newMult * 0.1;
+                critHits++;
+            } else {
+                entry.avgDmg = entry.avgDmg * 0.85 + hitDmg * 0.15;
+                entry.hits++;
+            }
+
+            saveCalibration();
+        }
+
+        function estimatedAvgDmg(atk) {
+            const entry = skillCalib[String(atk.skill)];
+            if (entry) return entry.avgDmg;
+
+            // Derive DPS from known skills
+            let total = 0;
+            let weight = 0;
+
+            for (const [k, v] of Object.entries(skillCalib)) {
+                const skill = ATTACKS.find(a => String(a.skill) === k);
+                if (!skill || skill.stamina <= 0) continue;
+                total += (v.avgDmg / skill.stamina) * v.hits;
+                weight += v.hits;
+            }
+
+            if (!weight) return -1;
+
+            const avgPerStam = total / weight;
+            return Math.floor(avgPerStam * atk.stamina * 1.10); // +10% safety
+        }
+
+        function predictWorstCase(atk) {
+            const avg = estimatedAvgDmg(atk);
+            if (avg < 0) return -1;
+            return Math.floor(avg * Math.min(critMultiplier, CRIT_MULT_MAX));
+        }
+
+        /* ================== EXP CAP FETCH ================== */
+
+        async function fetchMonsterCap(dgmid) {
+            if (monsterCaps.has(dgmid)) {
+                return monsterCaps.get(dgmid);
+            }
+
+            setStatus('📊 Fetching EXP cap...');
+
+            const html = await fetch(
+                `/battle.php?dgmid=${dgmid}&instance_id=${INSTANCE_ID}`, {
+                    credentials: 'include'
+                }
+            ).then(r => r.text());
+
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+
+            const block = [...doc.querySelectorAll('.stat-block')]
+                .find(b => b.querySelector('.label')?.textContent.trim() === 'EXP Cap');
+
+            const cap =
+                Number(
+                    block?.querySelector('div')
+                    ?.textContent.match(/([\d,]+)/)?.[1]
+                    ?.replace(/,/g, '')
+                ) || null;
+
+            monsterCaps.set(dgmid, cap);
+            return cap;
+        }
+
+        /* ================== POTIONS ================== */
+
+        function getPotionInvId(name) {
+            return [...document.querySelectorAll('.potion-card')]
+                .find(c =>
+                    c.querySelector('.potion-name span')
+                    ?.textContent.trim().toLowerCase() === name
+                )?.dataset.invId || null;
+        }
+
+        async function useStaminaPotion() {
+            if (!allowStaminaPotion) {
+                setStatus('⛔ Stamina potion disabled by user');
+                return false;
+            }
+
+            const invId = getPotionInvId('large stamina potion');
+            if (!invId) {
+                setStatus('⛔ No stamina potions left');
+                return false;
+            }
+
+            setStatus('🔋 Using stamina potion...');
+            await fetch('/use_item.php', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({
+                    inv_id: invId
+                }).toString()
+            });
+
+           await sleep(1200);
+
+            // ✅ Manually sync DOM with known potion effect
+            applyLocalStaminaRestore(STAMINA_POTION_RESTORE);
+
+            const newStamina = getCurrentStamina();
+            updateStaminaUI(newStamina);
+
+            setStatus('✅ Stamina restored. Resuming...');
+            return newStamina > 0;
+        }
+
+        async function useHpPotion() {
+            if (!allowHpPotion) {
+                setStatus('⛔ HP potion disabled by user');
+                return false;
+            }
+
+            const invId = getPotionInvId('full hp potion');
+            if (!invId) {
+                setStatus('⛔ No HP potions left');
+                return false;
+            }
+
+            setStatus('❤️ Using HP potion...');
+            await fetch('/user_heal_potion.php', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({
+                    inv_id: invId
+                }).toString()
+            });
+
+            await sleep(800);
+            setStatus('❤️ HP restored. Resuming...');
+            return true;
+
+            const hpText = document.querySelector('.topbar-hp-wrapper .hp-text');
+            const match = hpText?.textContent.match(/([\d,]+)\s*\/\s*([\d,]+)/);
+
+            if (match) {
+                const currentHp = Number(match[1].replace(/,/g, ''));
+                const maxHp = Number(match[2].replace(/,/g, ''));
+                updateHpUI(currentHp, maxHp);
+            }
+        }
+
+        /* ================== JOIN ================== */
+
+        async function joinDungeonBattle(dgmid) {
+            const user_id = document.cookie.match(/demon=(\d+)/)?.[1];
+            if (!INSTANCE_ID || !user_id) return false;
+
+            const res = await fetch('/dungeon_join_battle.php', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({
+                    instance_id: INSTANCE_ID,
+                    dgmid,
+                    user_id
+                }).toString()
+            });
+
+            const text = await res.text();
+            if (text.toLowerCase().includes('success')) {
+                await sleep(600);
+                return true;
+            }
+            return false;
+        }
+
+        async function attackMonster(dgmid, atk) {
+            const form = new FormData();
+            form.append('dgmid', dgmid);
+            form.append('instance_id', INSTANCE_ID);
+            form.append('skill_id', atk.skill);
+            form.append('stamina_cost', atk.stamina);
+
+            const res = await fetch('damage.php', {
+                method: 'POST',
+                credentials: 'include',
+                body: form
+            });
+
+            const text = await res.text();
+
+            // ✅ Try to parse JSON if possible
+            try {
+                return JSON.parse(text);
+            } catch {
+                // ✅ Normalize non‑JSON server errors (like HTTP 400)
+                return {
+                    status: 'error',
+                    message: text
+                };
+            }
+        }
+
+
+        /* ================== MAIN LOOP ================== */
+
+        async function run() {
+            if (running) return;
+            running = true;
+            paused = false;
+            skipRemaining = 0;
+            // Initialize per-run penalty counters (IMPORTANT)
+            monsterPenaltyRemaining.clear();
+            for (const [name, value] of monsterPenalties.entries()) {
+                monsterPenaltyRemaining.set(name, value);
+            }
+
+            setStatus('▶️ Starting auto farm...');
+
+            const cards = [...document.querySelectorAll('.mon[data-name]')]
+                .filter(c => selectedMonsters.has(normalizeName(c.dataset.name)));
+
+            const totalMonsters = cards.length;
+
+            for (let i = 0; i < cards.length; i++) {
+                if (paused) break;
+
+                const card = cards[i];
+                const monsterName = card.dataset.name;
+                const monsterIndex = i + 1;
+
+                /* ================== PENALTY SKIP ================== */
+
+                const monsterKey = normalizeName(monsterName);
+                const remainingPenalty =
+                    monsterPenaltyRemaining.get(monsterKey) || 0;
+
+                if (remainingPenalty > 0) {
+                    monsterPenaltyRemaining.set(monsterKey, remainingPenalty - 1);
+
+                    setStatus(
+                        `⚠️ Skipping penalized ${monsterName} ` +
+                        `(${monsterIndex}/${totalMonsters}) – ` +
+                        `${remainingPenalty - 1} left`
+                    );
+
+                    continue;
+                }
+
+
+                /* ================== JOIN BATTLE ================== */
+
+                const dgmid =
+                    card.querySelector('.qol-pick')?.dataset.mid ||
+                    card.querySelector('a[href*="dgmid="]')
+                    ?.href.match(/dgmid=(\d+)/)?.[1];
+
+                if (!dgmid) continue;
+                if (!await joinDungeonBattle(dgmid)) continue;
+
+                /* ================== DETERMINE CAP ================== */
+
+               let cap = null;
+
+                if (damageMode === 'exp') {
+                    cap = await fetchMonsterCap(dgmid);
+                }
+
+                else if (damageMode === 'global') {
+                    cap = playerDamageValue > 0 ? playerDamageValue : null;
+                }
+
+                else if (damageMode === 'monster') {
+                    const key = normalizeName(monsterName);
+                    const customCap = monsterPlayerCaps.get(key);
+                    cap = customCap > 0 ? customCap : null;
+                }
+
+
+
+                // ✅ PRE-ATTACK CAP FAILSAFE (card-based)
+                if (typeof cap === 'number') {
+                    const cardDamage = getDamageFromMonsterCard(card);
+
+                    if (typeof cardDamage === 'number' && cardDamage >= cap) {
+                        setStatus(
+                            `✅ ${monsterName} already capped ` +
+                            `(${cardDamage.toLocaleString()} / ${cap.toLocaleString()}) – skipping`
+                        );
+                        continue; // ⏭️ skip this monster entirely
+                    }
+                }
+                let damage = 0;
+                let lastDamage = -1;
+                let prevDamage = damage;
+
+
+                /* ================== ATTACK LOOP ================== */
+
+                let finalSlashUsed = false;
+
+                while (!paused) {
+                    lastDamage = damage;
+
+                    const baseAttack =
+                        ATTACKS.find(a => a.id === selectedAttack) || ATTACKS[0];
+
+                    let atk = downgradeAtkSmart(baseAttack.id, getCurrentStamina());
+
+                    // ── SOFT‑CAP PROTECTION ─────────────────────
+                    if (typeof cap === 'number' && cap > 0) {
+                        const remaining = cap - damage;
+                        if (remaining <= 0) break;
+
+                        const tolerance = 500_000; // regular mobs
+
+                        const normalEst = estimatedAvgDmg(atk);
+                        const worstCase = predictWorstCase(atk);
+
+                       if (
+                           normalEst >= 0 &&
+                           worstCase >= 0 &&
+                           (
+                               damage + normalEst > cap ||
+                               damage + worstCase > cap + tolerance
+                           )
+                       ) {
+                           const safe = safestFittingAttack(damage, cap, atk, tolerance);
+
+                        if (safe) {
+                            atk = safe;
+                        } else {
+                            const slash = ATTACKS.find(a => a.id === 'slash');
+
+                            if (!finalSlashUsed) {
+                                atk = slash;
+                                finalSlashUsed = true; // ✅ allow only once
+                            } else {
+                                break; // ✅ do not overshoot twice
+                            }
+                        }
+                       }
+
+                    }
+                    // ────────────────────────────────────────────
+
+
+
+                    /* --- Local stamina exhaustion --- */
+                    if (!atk) {
+                        // ✅ Do NOT use stamina potion here
+                        // ✅ Let the server be the authority
+                        atk = ATTACKS[0]; // slash (1 stamina)
+                    }
+
+
+                    const result = await attackMonster(dgmid, atk);
+                    if (typeof result?.stamina === 'number') {
+                        updateStaminaUI(result.stamina);
+                    }
+
+
+                    /* --- Server death error (no retaliation object) --- */
+                    if (
+                        result?.status === 'error' &&
+                        typeof result.message === 'string' &&
+                        result.message.toLowerCase().includes('dead')
+                    ) {
+                        setStatus(
+                            `❤️ You died on ${monsterName} ` +
+                            `(${monsterIndex}/${totalMonsters})`
+                        );
+                        if (!await useHpPotion()) break;
+                        continue;
+                    }
+
+                    /* --- Server stamina error --- */
+                   const staminaError =
+                         typeof result?.message === 'string' &&
+                         result.message.toLowerCase().includes('not enough stamina');
+
+                    if (staminaError) {
+                        const expPercent = getExpPercent();
+
+                        // 🧠 FAILSAFE: do NOT waste stamina potions near level up
+                        if (expPercent >= STAMINA_POTION_EXP_LIMIT) {
+                            setStatus(`🧠 EXP ${Math.floor(expPercent * 100)}% – saving stamina potion`	);
+
+                            const ok = await waitForStamina(1);
+                            if (!ok) {
+                                setStatus('⛔ Stamina did not recover – exiting fight');
+                                break;
+                            }
+
+                            continue; // retry attack
+                        }
+
+                        // Try potion first
+                        const used = await useStaminaPotion();
+
+                        if (used) {
+                            continue; // retry attack after potion
+                        }
+
+                        // No potion → wait instead of exiting
+                        setStatus('⏳ Waiting for stamina…');
+
+                        const ok = await waitForStamina(1);
+                        if (!ok) {
+                            setStatus('⛔ Stamina did not recover – exiting fight');
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    /* --- HP retaliation (null-safe) --- */
+                    const hpAfter = result?.retaliation?.user_hp_after;
+
+                    // Update HP bar if server gives us HP info
+                   if (typeof hpAfter === 'number') {
+                       const maxHp = getMaxHpOnce();
+                       if (maxHp) {
+                           updateHpUI(hpAfter, maxHp);
+                       }
+                   }
+
+                    if (typeof hpAfter === 'number' && hpAfter <= 0) {
+                        setStatus(
+                            `❤️ Using HP potion on ${monsterName} ` +
+                            `(${monsterIndex}/${totalMonsters})`
+                        );
+                        if (!await useHpPotion()) break;
+                        continue;
+                    }
+
+                    damage = getMyDamage(result);
+
+                    const hit = result?.totaldmgdealt;
+                    if (typeof hit === 'number' && hit > 0) {
+                        updateCalibration(hit, atk);
+                    }
+
+
+                    /* ================== STATUS ================== */
+
+                    setStatus(
+                        `⚔️ Attacking ${monsterName} ` +
+                        `(${monsterIndex}/${totalMonsters}) – ` +
+                        `${damage.toLocaleString()} / ${cap?.toLocaleString() ?? '∞'}`
+                    );
+
+                    /* ================== EXIT CONDITIONS ================== */
+
+                    if (typeof cap === 'number' && damage >= cap) {
+                        setStatus(
+                            `✅ Cap reached on ${monsterName} ` +
+                            `(${monsterIndex}/${totalMonsters}). Moving on…`
+                        );
+                        break;
+                    }
+
+                    if (
+                        hasDamageStopped(lastDamage, damage) &&
+                        typeof cap === 'number' &&
+                        damage >= cap - CAP_EPSILON
+                    ) {
+                        setStatus(
+                            `✅ Monster capped on ${monsterName} ` +
+                            `(${monsterIndex}/${totalMonsters}). Moving on…`
+                        );
+                        break;
+                    }
+
+                    if (hasDamageStopped(lastDamage, damage)) {
+                        setStatus(
+                            `✅ ${monsterName} defeated ` +
+                            `(${monsterIndex}/${totalMonsters}). Moving on…`
+                        );
+                        break;
+                    }
+
+                    await sleep(300);
+                }
+            }
+
+            running = false;
+
+            if (!paused) {
+                setStatus('🏁 Run completed – refreshing...');
+
+                // ✅ Refresh page after 2 seconds
+                setTimeout(() => {
+                    location.reload();
+                }, 2000);
+            }
+        }
+        loadState();
+
+        /* ================== PUBLIC API ================== */
+
+        return {
+            ATTACKS,
+            start: run,
+            pause: () => {
+                paused = true;
+                setStatus('⏸️ Paused');
+            },
+
+            setAttack: id => {
+                selectedAttack = id;
+                saveState();
+            },
+
+            setDamageMode: m => {
+                damageMode = m;
+                saveState();
+            },
+
+            setPlayerDamage: v => {
+                playerDamageValue = Number(v) || 0;
+                saveState();
+            },
+
+            toggleMonster: (n, v) => {
+                v ? selectedMonsters.add(normalizeName(n)) :
+                    selectedMonsters.delete(normalizeName(n));
+                saveState();
+            },
+
+            setMonsterPenalty: (n, v) => {
+                monsterPenalties.set(normalizeName(n), Number(v) || 0);
+                saveState();
+            },
+
+            setMonsterPlayerCap: (name, value) => {
+                const v = Number(value) || 0;
+                if (v > 0) {
+                    monsterPlayerCaps.set(normalizeName(name), v);
+                } else {
+                    monsterPlayerCaps.delete(normalizeName(name));
+                }
+                saveState();
+            },
+
+            setUseStaminaPotion: v => {
+                allowStaminaPotion = !!v;
+                saveState();
+            },
+
+            setUseHpPotion: v => {
+                allowHpPotion = !!v;
+                saveState();
+            },
+
+            clearMonsterPenalties: () => monsterPenalties.clear(),
+
+            /* ✅ ADD THESE GETTERS BELOW */
+
+            getSelectedMonsters: () => [...selectedMonsters],
+            getSelectedAttack: () => selectedAttack,
+            getDamageMode: () => damageMode,
+            getPlayerDamage: () => playerDamageValue,
+            getMonsterPenalties: () => new Map(monsterPenalties),
+            getMonsterPlayerCaps: () => new Map(monsterPlayerCaps),
+            isStaminaPotionAllowed: () => allowStaminaPotion,
+            isHpPotionAllowed: () => allowHpPotion
         };
-
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
 
-    function loadState() {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return;
+    /* =====================================================================
+       UI Interface
+    ===================================================================== */
 
-        try {
-            const state = JSON.parse(raw);
+    function createCAFUI(caf) {
 
-            if (state.selectedAttack) selectedAttack = state.selectedAttack;
-            if (state.damageMode) damageMode = state.damageMode;
-            if (typeof state.playerDamageValue === 'number')
-                playerDamageValue = state.playerDamageValue;
+        const normalize = s => (s || '').trim().toLowerCase();
 
-            allowStaminaPotion = !!state.allowStaminaPotion;
-            allowHpPotion = !!state.allowHpPotion;
-
-            selectedMonsters.clear();
-            (state.selectedMonsters || []).forEach(m =>
-                                                   selectedMonsters.add(normalizeName(m))
-                                                  );
-
-            monsterPenalties.clear();
-            (state.monsterPenalties || []).forEach(([name, val]) =>
-                                                   monsterPenalties.set(name, val)
-                                                  );
-        } catch (e) {
-            console.warn('[CAF] Failed to load saved state', e);
-        }
-    }
-
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-  function setStatus(msg) {
-    const bar = document.getElementById('caf-status-bar');
-    if (bar) bar.textContent = msg;
-  }
-
-  function getCurrentStamina() {
-    const el = document.getElementById('stamina_span');
-    return el ? Number(el.textContent.replace(/[^\d]/g, '')) || 0 : 0;
-  }
-
-  function getMyDamage(result) {
-    const uid = document.cookie.match(/demon=(\d+)/)?.[1];
-    return result?.leaderboard?.find(e => String(e.ID) === uid)?.DAMAGE_DEALT ?? 0;
-  }
-
-  function hasDamageStopped(prev, curr) {
-    return typeof prev === 'number' &&
-           typeof curr === 'number' &&
-           curr <= prev;
-  }
-
-  function downgradeAtkSmart(atkId, stamina) {
-    const ordered = [...ATTACKS].sort((a,b)=>b.stamina-a.stamina);
-    const start = ordered.findIndex(a => a.id === atkId);
-    if (start === -1) return null;
-    for (let i = start; i < ordered.length; i++) {
-      if (stamina >= ordered[i].stamina) return ordered[i];
-    }
-    return null;
-  }
-
-  /* ================== EXP CAP FETCH ================== */
-
-  async function fetchMonsterCap(dgmid) {
-    if (monsterCaps.has(dgmid)) {
-      return monsterCaps.get(dgmid);
-    }
-
-    setStatus('📊 Fetching EXP cap...');
-
-    const html = await fetch(
-      `/battle.php?dgmid=${dgmid}&instance_id=${INSTANCE_ID}`,
-      { credentials: 'include' }
-    ).then(r => r.text());
-
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-
-    const block = [...doc.querySelectorAll('.stat-block')]
-      .find(b => b.querySelector('.label')?.textContent.trim() === 'EXP Cap');
-
-    const cap =
-      Number(
-        block?.querySelector('div')
-          ?.textContent.match(/([\d,]+)/)?.[1]
-          ?.replace(/,/g, '')
-      ) || null;
-
-    monsterCaps.set(dgmid, cap);
-    return cap;
-  }
-
-  /* ================== POTIONS ================== */
-
-  function getPotionInvId(name) {
-    return [...document.querySelectorAll('.potion-card')]
-      .find(c =>
-        c.querySelector('.potion-name span')
-          ?.textContent.trim().toLowerCase() === name
-      )?.dataset.invId || null;
-  }
-
-async function useStaminaPotion() {
-  if (!allowStaminaPotion) {
-    setStatus('⛔ Stamina potion disabled by user');
-    return false;
-  }
-
-  const invId = getPotionInvId('large stamina potion');
-  if (!invId) {
-    setStatus('⛔ No stamina potions left');
-    return false;
-  }
-
-  setStatus('🔋 Using stamina potion...');
-  await fetch('/use_item.php', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ inv_id: invId }).toString()
-  });
-
-  await sleep(1200);
-  setStatus('✅ Stamina restored. Resuming...');
-  return true;
-}
-
-async function useHpPotion() {
-  if (!allowHpPotion) {
-    setStatus('⛔ HP potion disabled by user');
-    return false;
-  }
-
-  const invId = getPotionInvId('full hp potion');
-  if (!invId) {
-    setStatus('⛔ No HP potions left');
-    return false;
-  }
-
-  setStatus('❤️ Using HP potion...');
-  await fetch('/user_heal_potion.php', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ inv_id: invId }).toString()
-  });
-
-  await sleep(800);
-  setStatus('❤️ HP restored. Resuming...');
-  return true;
-}
-
-  /* ================== JOIN ================== */
-
-  async function joinDungeonBattle(dgmid) {
-    const user_id = document.cookie.match(/demon=(\d+)/)?.[1];
-    if (!INSTANCE_ID || !user_id) return false;
-
-    const res = await fetch('/dungeon_join_battle.php', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ instance_id: INSTANCE_ID, dgmid, user_id }).toString()
-    });
-
-    const text = await res.text();
-    if (text.toLowerCase().includes('success')) {
-      await sleep(600);
-      return true;
-    }
-    return false;
-  }
-
-  async function attackMonster(dgmid, atk) {
-    const form = new FormData();
-    form.append('dgmid', dgmid);
-    form.append('instance_id', INSTANCE_ID);
-    form.append('skill_id', atk.skill);
-    form.append('stamina_cost', atk.stamina);
-
-    return fetch('damage.php', {
-      method: 'POST',
-      credentials: 'include',
-      body: form
-    }).then(r => r.json());
-  }
-
-  /* ================== MAIN LOOP ================== */
-
- async function run() {
-  if (running) return;
-  running = true;
-  paused = false;
-  skipRemaining = 0;
-     // Initialize per-run penalty counters (IMPORTANT)
-     monsterPenaltyRemaining.clear();
-     for (const [name, value] of monsterPenalties.entries()) {
-         monsterPenaltyRemaining.set(name, value);
-     }
-
-  setStatus('▶️ Starting auto farm...');
-
-  const cards = [...document.querySelectorAll('.mon[data-name]')]
-    .filter(c => selectedMonsters.has(normalizeName(c.dataset.name)));
-
-  const totalMonsters = cards.length;
-
-  for (let i = 0; i < cards.length; i++) {
-    if (paused) break;
-
-    const card = cards[i];
-    const monsterName = card.dataset.name;
-    const monsterIndex = i + 1;
-
-    /* ================== PENALTY SKIP ================== */
-
-      const monsterKey = normalizeName(monsterName);
-      const remainingPenalty =
-            monsterPenaltyRemaining.get(monsterKey) || 0;
-
-      if (remainingPenalty > 0) {
-          monsterPenaltyRemaining.set(monsterKey, remainingPenalty - 1);
-
-          setStatus(
-              `⚠️ Skipping penalized ${monsterName} ` +
-              `(${monsterIndex}/${totalMonsters}) – ` +
-              `${remainingPenalty - 1} left`
-          );
-
-          continue;
-      }
-
-
-    /* ================== JOIN BATTLE ================== */
-
-    const dgmid =
-      card.querySelector('.qol-pick')?.dataset.mid ||
-      card.querySelector('a[href*="dgmid="]')
-        ?.href.match(/dgmid=(\d+)/)?.[1];
-
-    if (!dgmid) continue;
-    if (!await joinDungeonBattle(dgmid)) continue;
-
-    /* ================== DETERMINE CAP ================== */
-
-    const cap =
-      damageMode === 'player'
-        ? playerDamageValue
-        : await fetchMonsterCap(dgmid);
-
-    let damage = 0;
-    let lastDamage = -1;
-
-    /* ================== ATTACK LOOP ================== */
-
-    while (!paused) {
-      lastDamage = damage;
-
-      const baseAttack =
-        ATTACKS.find(a => a.id === selectedAttack) || ATTACKS[0];
-
-      let atk = downgradeAtkSmart(baseAttack.id, getCurrentStamina());
-
-      /* --- Local stamina exhaustion --- */
-      if (!atk) {
-        setStatus(
-          `🔋 Using stamina potion on ${monsterName} ` +
-          `(${monsterIndex}/${totalMonsters})`
-        );
-        if (!await useStaminaPotion()) break;
-        continue;
-      }
-
-      const result = await attackMonster(dgmid, atk);
-        /* --- Server death error (no retaliation object) --- */
-        if (
-            result?.status === 'error' &&
-            typeof result.message === 'string' &&
-            result.message.toLowerCase().includes('dead')
-        ) {
-            setStatus(
-                `❤️ You died on ${monsterName} ` +
-                `(${monsterIndex}/${totalMonsters})`
-            );
-            if (!await useHpPotion()) break;
-            continue;
+        function findWrapper() {
+            return [...document.querySelectorAll('div')]
+                .find(d =>
+                    d.style?.background?.includes('15, 18, 29') &&
+                    d.querySelector('.qol-status') &&
+                    d.querySelector('.qol-filter-row')
+                );
         }
 
-      /* --- Server stamina error --- */
-      if (
-        result?.status === 'error' &&
-        typeof result.message === 'string' &&
-        result.message.toLowerCase().includes('stamina')
-      ) {
-        setStatus(
-          `🔋 Server stamina error on ${monsterName} ` +
-          `(${monsterIndex}/${totalMonsters})`
-        );
-        if (!await useStaminaPotion()) break;
-        continue;
-      }
+        function injectUI() {
+            const wrapper = findWrapper();
+            if (!wrapper || document.getElementById('custom-auto-farm')) return false;
 
-      /* --- HP retaliation (null-safe) --- */
-      const hpAfter = result?.retaliation?.user_hp_after;
-      if (typeof hpAfter === 'number' && hpAfter <= 0) {
-        setStatus(
-          `❤️ Using HP potion on ${monsterName} ` +
-          `(${monsterIndex}/${totalMonsters})`
-        );
-        if (!await useHpPotion()) break;
-        continue;
-      }
+            const root = document.createElement('div');
+            root.id = 'custom-auto-farm';
+            root.style.marginTop = '10px';
 
-      damage = getMyDamage(result);
-
-      /* ================== STATUS ================== */
-
-      setStatus(
-        `⚔️ Attacking ${monsterName} ` +
-        `(${monsterIndex}/${totalMonsters}) – ` +
-        `${damage.toLocaleString()} / ${cap?.toLocaleString() ?? '∞'}`
-      );
-
-      /* ================== EXIT CONDITIONS ================== */
-
-      if (typeof cap === 'number' && damage >= cap) {
-        setStatus(
-          `✅ Cap reached on ${monsterName} ` +
-          `(${monsterIndex}/${totalMonsters}). Moving on…`
-        );
-        break;
-      }
-
-      if (
-        hasDamageStopped(lastDamage, damage) &&
-        typeof cap === 'number' &&
-        damage >= cap - CAP_EPSILON
-      ) {
-        setStatus(
-          `✅ Monster capped on ${monsterName} ` +
-          `(${monsterIndex}/${totalMonsters}). Moving on…`
-        );
-        break;
-      }
-
-      if (hasDamageStopped(lastDamage, damage)) {
-        setStatus(
-          `✅ ${monsterName} defeated ` +
-          `(${monsterIndex}/${totalMonsters}). Moving on…`
-        );
-        break;
-      }
-
-      await sleep(300);
-    }
-  }
-
-  running = false;
-  if (!paused) {
-    setStatus('🏁 Run completed');
-  }
-}
-loadState();
-  /* ================== PUBLIC API ================== */
-
-return {
-  ATTACKS,
-  start: run,
-  pause: () => { paused = true; setStatus('⏸️ Paused'); },
-
-setAttack: id => {
-  selectedAttack = id;
-  saveState();
-},
-
-setDamageMode: m => {
-  damageMode = m;
-  saveState();
-},
-
-setPlayerDamage: v => {
-  playerDamageValue = Number(v) || 0;
-  saveState();
-},
-
-toggleMonster: (n, v) => {
-  v ? selectedMonsters.add(normalizeName(n))
-    : selectedMonsters.delete(normalizeName(n));
-  saveState();
-},
-
-setMonsterPenalty: (n, v) => {
-  monsterPenalties.set(normalizeName(n), Number(v) || 0);
-  saveState();
-},
-
-setUseStaminaPotion: v => {
-  allowStaminaPotion = !!v;
-  saveState();
-},
-
-setUseHpPotion: v => {
-  allowHpPotion = !!v;
-  saveState();
-},
-
-    clearMonsterPenalties: () => monsterPenalties.clear(),
-
-  /* ✅ ADD THESE GETTERS BELOW */
-
-  getSelectedMonsters: () => [...selectedMonsters],
-  getSelectedAttack: () => selectedAttack,
-  getDamageMode: () => damageMode,
-  getPlayerDamage: () => playerDamageValue,
-  getMonsterPenalties: () => new Map(monsterPenalties),
-  isStaminaPotionAllowed: () => allowStaminaPotion,
-  isHpPotionAllowed: () => allowHpPotion
-};
-}
-
-/* =====================================================================
-   UI Interface
-===================================================================== */
-
-function createCAFUI(caf) {
-
-  const normalize = s => (s||'').trim().toLowerCase();
-
-  function findWrapper() {
-    return [...document.querySelectorAll('div')]
-      .find(d =>
-        d.style?.background?.includes('15, 18, 29') &&
-        d.querySelector('.qol-status') &&
-        d.querySelector('.qol-filter-row')
-      );
-  }
-
-  function injectUI() {
-    const wrapper = findWrapper();
-    if (!wrapper || document.getElementById('custom-auto-farm')) return false;
-
-    const root = document.createElement('div');
-    root.id = 'custom-auto-farm';
-    root.style.marginTop = '10px';
-
-    root.innerHTML = `
+            root.innerHTML = `
 <div style="background:#12162a;border:1px solid #303a60;border-radius:8px;overflow:hidden;">
 
   <!-- HEADER (clickable) -->
@@ -13265,18 +13688,34 @@ function createCAFUI(caf) {
   </div>
 
   <label>
-    <input type="radio" name="caf-dmg" value="cap" checked>
-    CAP
-  </label>
+  <input type="radio" name="caf-dmg" value="exp">
+  EXP Cap
+</label>
 
-  <label style="margin-left:12px">
-    <input type="radio" name="caf-dmg" value="player">
-    Player Choice
-  </label>
+<label style="margin-left:12px">
+  <input type="radio" name="caf-dmg" value="global">
+  Global Choice
+</label>
+
+<label style="margin-left:12px">
+  <input type="radio" name="caf-dmg" value="monster">
+  Per Monster Cap
+</label>
 
   <input id="caf-player-dmg"
          type="number"
          style="display:none;margin-top:6px;width:100%;">
+
+         <div id="caf-monster-cap-section"
+     style="display:none;margin-bottom:10px;font-size:13px;">
+  <div style="font-weight:600;font-size:13px;margin-bottom:6px;">
+    🎯 Per Monster Caps
+  </div>
+
+  <div id="caf-monster-caps"
+       style="display:flex;flex-direction:column;gap:8px;flex-wrap: wrap;align-content: flex-start;">
+  </div>
+</div>
 </div>
 <div style="margin-bottom:10px;font-size:13px;">
   <div style="font-weight:600;font-size:13px;margin-bottom:6px;">
@@ -13313,219 +13752,273 @@ function createCAFUI(caf) {
 </div>
 `;
 
-    wrapper.querySelector('.qol-status').after(root);
-      // Create status bar
-const statusWrap = root.querySelector('#caf-status-wrap');
-const statusBar = document.createElement('div');
+            wrapper.querySelector('.qol-status').after(root);
+            // Create status bar
+            const statusWrap = root.querySelector('#caf-status-wrap');
+            const statusBar = document.createElement('div');
 
-statusBar.id = 'caf-status-bar';
-statusBar.textContent = 'Idle';
+            statusBar.id = 'caf-status-bar';
+            statusBar.textContent = 'Idle';
 
-statusBar.style.cssText =
-  'padding:6px 10px;' +
-  'background:#12162a;' +
-  'border:1px solid #303a60;' +
-  'color:#8aa2ff;' +
-  'font-size:13px;' +
-  'border-radius:6px;';
+            statusBar.style.cssText =
+                'padding:6px 10px;' +
+                'background:#12162a;' +
+                'border:1px solid #303a60;' +
+                'color:#8aa2ff;' +
+                'font-size:13px;' +
+                'border-radius:6px;';
 
-statusWrap.appendChild(statusBar);
-
-
-    // Collapse by default
-      const content = root.querySelector('#caf-content');
-      const icon = root.querySelector('#caf-toggle-icon');
-
-      if (content && icon) {
-          content.style.display = 'none';
-          icon.style.transform = 'rotate(-90deg)';
-      }
-
-    populateMonsters();
-    populatePenaltyInputs();
- // Restore UI from CAF state
-
-const selected = new Set(caf.getSelectedMonsters());
-
-document.querySelectorAll('[data-monster]').forEach(cb => {
-  cb.checked = selected.has(cb.dataset.monster);
-});
-
-// restore attack
-const atk = document.querySelector(
-  `[data-attack="${caf.getSelectedAttack()}"]`
-);
-if (atk) atk.checked = true;
-
-// restore damage mode
-document.querySelectorAll('[name="caf-dmg"]').forEach(r => {
-  r.checked = r.value === caf.getDamageMode();
-});
-
-// restore player damage
-document.getElementById('caf-player-dmg').value =
-  caf.getPlayerDamage();
-
-// restore potion checkboxes
-document.getElementById('caf-use-lsp').checked =
-  caf.isStaminaPotionAllowed();
-
-document.getElementById('caf-use-hp').checked =
-  caf.isHpPotionAllowed();
-
-// restore penalties
-const penalties = caf.getMonsterPenalties();
-document.querySelectorAll('[data-penalty]').forEach(inp => {
-  inp.value = penalties.get(inp.dataset.penalty) || 0;
-});
+            statusWrap.appendChild(statusBar);
 
 
-      const lspCheckbox = root.querySelector('#caf-use-lsp');
-const hpCheckbox  = root.querySelector('#caf-use-hp');
+            // Collapse by default
+            const content = root.querySelector('#caf-content');
+            const icon = root.querySelector('#caf-toggle-icon');
 
-// ✅ Optional defaults (change if you want)
-//lspCheckbox.checked = false;
-//hpCheckbox.checked  = false;
+            if (content && icon) {
+                content.style.display = 'none';
+                icon.style.transform = 'rotate(-90deg)';
+            }
 
-// ✅ Initialize CAF state
-//caf.setUseStaminaPotion(lspCheckbox.checked);
-//caf.setUseHpPotion(hpCheckbox.checked);
+            populateMonsters();
+            populatePenaltyInputs();
+            populateMonsterCaps();
 
-// ✅ React to changes
-lspCheckbox.addEventListener('change', e => {
-  caf.setUseStaminaPotion(e.target.checked);
-});
+            // Restore UI from CAF state
 
-hpCheckbox.addEventListener('change', e => {
-  caf.setUseHpPotion(e.target.checked);
-});
+            const selected = new Set(caf.getSelectedMonsters());
 
-    return true;
-  }
+            document.querySelectorAll('[data-monster]').forEach(cb => {
+                cb.checked = selected.has(cb.dataset.monster);
+            });
 
-  function enableCollapse() {
-        const header  = document.getElementById('caf-header');
-        const content = document.getElementById('caf-content');
-        const icon    = document.getElementById('caf-toggle-icon');
+            // restore attack
+            const atk = document.querySelector(
+                `[data-attack="${caf.getSelectedAttack()}"]`
+            );
+            if (atk) atk.checked = true;
 
-        if (!header || !content) return;
+            // restore damage mode
+            document.querySelectorAll('[name="caf-dmg"]').forEach(r => {
+                r.checked = r.value === caf.getDamageMode();
+            });
+            updateDamageModeUI(caf.getDamageMode());
 
-        header.addEventListener('click', () => {
-            const collapsed = content.style.display === 'none';
+            // ✅ Restore global player cap visibility on load
+            document.getElementById('caf-player-dmg').style.display =
+                caf.getDamageMode() === 'player' ? 'block' : 'none';
 
-            content.style.display = collapsed ? 'block' : 'none';
-            icon.style.transform = collapsed ? 'rotate(0deg)' : 'rotate(-90deg)';
-        });
-    }
+            // restore player damage
+            document.getElementById('caf-player-dmg').value =
+                caf.getPlayerDamage();
 
-  function enableDropdownMouseLeave() {
-      document.querySelectorAll('.caf-dd-wrap').forEach(wrap => {
-          wrap.addEventListener('mouseleave', () => {
-              setTimeout(() => {
-                  const dd = wrap.querySelector('div[id$="-dropdown"]');
-                  if (dd) dd.style.display = 'none';
-              }, 100);
-          });
-      });
-  }
+            // restore potion checkboxes
+            document.getElementById('caf-use-lsp').checked =
+                caf.isStaminaPotionAllowed();
 
-  function populateMonsters() {
-    const dd = document.getElementById('caf-monster-dropdown');
-    const names = [...new Set(
-      [...document.querySelectorAll('.mon[data-name]')]
-        .map(m => normalize(m.dataset.name))
-    )];
+            document.getElementById('caf-use-hp').checked =
+                caf.isHpPotionAllowed();
 
-    dd.innerHTML = names.map(n => `
+            // restore penalties
+            const penalties = caf.getMonsterPenalties();
+            document.querySelectorAll('[data-penalty]').forEach(inp => {
+                inp.value = penalties.get(inp.dataset.penalty) || 0;
+            });
+
+            // restore per-monster player caps
+            const caps = caf.getMonsterPlayerCaps();
+            document.querySelectorAll('[data-player-cap]').forEach(inp => {
+                inp.value = caps.get(inp.dataset.playerCap) || '';
+            });
+
+            const lspCheckbox = root.querySelector('#caf-use-lsp');
+            const hpCheckbox = root.querySelector('#caf-use-hp');
+
+            // ✅ React to changes
+            lspCheckbox.addEventListener('change', e => {
+                caf.setUseStaminaPotion(e.target.checked);
+            });
+
+            hpCheckbox.addEventListener('change', e => {
+                caf.setUseHpPotion(e.target.checked);
+            });
+
+            return true;
+        }
+
+        function enableCollapse() {
+            const header = document.getElementById('caf-header');
+            const content = document.getElementById('caf-content');
+            const icon = document.getElementById('caf-toggle-icon');
+
+            if (!header || !content) return;
+
+            header.addEventListener('click', () => {
+                const collapsed = content.style.display === 'none';
+
+                content.style.display = collapsed ? 'block' : 'none';
+                icon.style.transform = collapsed ? 'rotate(0deg)' : 'rotate(-90deg)';
+            });
+        }
+
+        function enableDropdownMouseLeave() {
+            document.querySelectorAll('.caf-dd-wrap').forEach(wrap => {
+                wrap.addEventListener('mouseleave', () => {
+                    setTimeout(() => {
+                        const dd = wrap.querySelector('div[id$="-dropdown"]');
+                        if (dd) dd.style.display = 'none';
+                    }, 100);
+                });
+            });
+        }
+
+        function updateDamageModeUI(mode) {
+            // Global cap input
+            document.getElementById('caf-player-dmg').style.display =
+                mode === 'global' ? 'block' : 'none';
+
+            // Per-monster caps section
+            document.getElementById('caf-monster-cap-section').style.display =
+                mode === 'monster' ? 'block' : 'none';
+        }
+
+        function populateMonsters() {
+            const dd = document.getElementById('caf-monster-dropdown');
+            const names = [...new Set(
+                [...document.querySelectorAll('.mon[data-name]')]
+                .map(m => normalize(m.dataset.name))
+            )];
+
+            dd.innerHTML = names.map(n => `
       <label style="font-size:13px;display:flex;gap:6px;align-items:center;">
         <input type="checkbox" data-monster="${n}">
         ${n.replace(/\b\w/g,c=>c.toUpperCase())}
       </label>
     `).join('');
-  }
+        }
 
-  function populatePenaltyInputs() {
-      const wrap = document.getElementById('caf-penalties');
-      if (!wrap) return;
+        function populatePenaltyInputs() {
+            const wrap = document.getElementById('caf-penalties');
+            if (!wrap) return;
 
-      const monsters = [...new Set(
-          [...document.querySelectorAll('.mon[data-name]')]
-          .map(m => normalize(m.dataset.name))
-      )];
+            const monsters = [...new Set(
+                [...document.querySelectorAll('.mon[data-name]')]
+                .map(m => normalize(m.dataset.name))
+            )];
 
-      wrap.innerHTML = monsters.map(name => `
-    <div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;">
-      <span>${name.replace(/\b\w/g,c=>c.toUpperCase())}</span>
+         wrap.innerHTML = monsters.map(name => `
+  <div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;align-items:center;">
+    <span style="flex:1;">
+      ${name.replace(/\b\w/g, c => c.toUpperCase())}
+    </span>
+
+    <input type="number"
+           min="0"
+           value="0"
+           data-penalty="${name}"
+           title="Penalty skips"
+           style="width:64px;text-align:center;">
+  </div>
+`).join('');
+
+        }
+
+        function populateMonsterCaps() {
+            const wrap = document.getElementById('caf-monster-caps');
+            if (!wrap) return;
+
+            const monsters = [...new Set(
+                [...document.querySelectorAll('.mon[data-name]')]
+                .map(m => normalize(m.dataset.name))
+            )];
+
+            wrap.innerHTML = monsters.map(name => `
+    <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
+      <span style="flex:1;">
+        ${name.replace(/\b\w/g, c => c.toUpperCase())}
+      </span>
+
       <input type="number"
              min="0"
-             value="0"
-             data-penalty="${name}"
-             style="width:64px;text-align:center;">
+             placeholder="Cap"
+             data-player-cap="${name}"
+             class="caf-player-cap"
+             style="width:96px;text-align:center;">
     </div>
   `).join('');
-  }
+        }
 
-  document.addEventListener('click', e => {
-if (e.target.id === 'caf-start') {
-  caf.start();
-  const sb = document.getElementById('caf-status-bar');
-  if (sb) sb.textContent = 'Running auto farm...';
-}
+        document.addEventListener('click', e => {
+            if (e.target.id === 'caf-start') {
+                caf.start();
+                const sb = document.getElementById('caf-status-bar');
+                if (sb) sb.textContent = 'Running auto farm...';
+            }
 
-if (e.target.id === 'caf-pause') {
-  caf.pause();
-  const sb = document.getElementById('caf-status-bar');
-  if (sb) sb.textContent = 'Paused';
-}
+            if (e.target.id === 'caf-pause') {
+                caf.pause();
+                const sb = document.getElementById('caf-status-bar');
+                if (sb) sb.textContent = 'Paused';
+            }
 
 
-    if (e.target.id === 'caf-monster-btn')
-      document.getElementById('caf-monster-dropdown').style.display = 'block';
+            if (e.target.id === 'caf-monster-btn')
+                document.getElementById('caf-monster-dropdown').style.display = 'block';
 
-    if (e.target.id === 'caf-attack-btn')
-      document.getElementById('caf-attack-dropdown').style.display = 'block';
+            if (e.target.id === 'caf-attack-btn')
+                document.getElementById('caf-attack-dropdown').style.display = 'block';
 
-    if (e.target.matches('[data-monster]'))
-      caf.toggleMonster(e.target.dataset.monster, e.target.checked);
+            if (e.target.matches('[data-monster]'))
+                caf.toggleMonster(e.target.dataset.monster, e.target.checked);
 
-    if (e.target.matches('[data-attack]'))
-      caf.setAttack(e.target.dataset.attack);
+            if (e.target.matches('[data-attack]'))
+                caf.setAttack(e.target.dataset.attack);
 
-    if (e.target.name === 'caf-dmg') {
-      caf.setDamageMode(e.target.value);
-      document.getElementById('caf-player-dmg').style.display =
-        e.target.value === 'player' ? 'block' : 'none';
+          if (e.target.name === 'caf-dmg') {
+              caf.setDamageMode(e.target.value);
+              updateDamageModeUI(e.target.value);
+          }
+
+        });
+
+        document.addEventListener('input', e => {
+            if (e.target.id === 'caf-player-dmg')
+                caf.setPlayerDamage(Number(e.target.value));
+        });
+
+        document.addEventListener('input', e => {
+            if (e.target.matches('[data-penalty]')) {
+                const name = e.target.dataset.penalty;
+                const value = Number(e.target.value) || 0;
+
+                caf.setMonsterPenalty(name, value);
+            }
+        });
+
+        document.addEventListener('input', e => {
+            if (e.target.matches('[data-player-cap]')) {
+                const name = e.target.dataset.playerCap;
+                const value = Number(e.target.value) || 0;
+
+                caf.setMonsterPlayerCap(name, value);
+            }
+        });
+
+        const wait = setInterval(() => {
+
+            if (injectUI()) {
+                enableDropdownMouseLeave();
+                enableCollapse();
+                clearInterval(wait);
+            }
+
+            ;
+        }, 300);
     }
-  });
 
-  document.addEventListener('input', e => {
-    if (e.target.id === 'caf-player-dmg')
-      caf.setPlayerDamage(Number(e.target.value));
-  });
+    /* ===================================================================== */
 
-document.addEventListener('input', e => {
-  if (e.target.matches('[data-penalty]')) {
-    const name  = e.target.dataset.penalty;
-    const value = Number(e.target.value) || 0;
-
-    caf.setMonsterPenalty(name, value);
-  }
-});
-
-  const wait = setInterval(()=>{
-
-if (injectUI()) {
-  enableDropdownMouseLeave();
-  enableCollapse();
-  clearInterval(wait);
-}
-
-; },300);
-}
-
-/* ===================================================================== */
-
-const caf = createCAFLogic();
-createCAFUI(caf);
+    const caf = createCAFLogic();
+    createCAFUI(caf);
 
 })();
