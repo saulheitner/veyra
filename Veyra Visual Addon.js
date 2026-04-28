@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.17.2
+// @version      2.17.3
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -12697,20 +12697,9 @@ ${(() => {
   window.addEventListener('beforeunload', cleanup, { passive: true });
 })();
 
-//Custom auto farm
-// ==UserScript==
-// @name         custom auto farm
-// @namespace    https://github.com/Daregon-sh/veyra
-// @version      3.17.2
-// @description  sidebars visual integration
-// @author       Daregon
-// @match        https://demonicscans.org/*
-// @grant        GM_xmlhttpRequest
-// @connect      demonicscans.org
-// @license MIT
-// ==/UserScript==
-
+//Custom dungeon auto farm
 (function() {
+     if (!vv.isOn('custom_auto_farm')) return;
     'use strict';
 
     /* =====================================================================
@@ -12730,8 +12719,13 @@ ${(() => {
         const monsterPenalties = new Map(); // name -> skip count
         const monsterPenaltyRemaining = new Map(); // name -> remaining number of times to skip THAT monster
         const monsterPlayerCaps = new Map(); // name -> custom cap
+        const monsterDamageTracker = new Map(); // dgmid -> damage
+        // 🧠 Learned attack damage (rolling average)
+        const learnedAttackDamage = new Map(); // atkId -> { avg: number, count: number }
+        // Tracks last known total damage per monster
+        const monsterLastDamage = new Map();   // dgmid -> last total damage
 
-
+        const LEARNING_HITS_REQUIRED = 3;
 
         let selectedAttack = 'slash';
         let allowStaminaPotion = false;
@@ -12740,12 +12734,17 @@ ${(() => {
         // ✅ UI compatibility
         let damageMode = 'exp';// 'exp' | 'global' | 'monster'
         let playerDamageValue = 0;
+        let avgDamagePerStamina = null;
 
         let running = false;
         let paused = false;
         let skipRemaining = 0;
 
         const CAP_EPSILON = 10_000;
+        // 🟡 Soft cap configuration
+        //const SOFT_CAP_RATIO = 0.90;     // 90% of cap
+        //const SOFT_CAP_BUFFER = 2000;  // extra safety buffer
+
 
         const ATTACKS = [{
                 id: 'slash',
@@ -12969,6 +12968,114 @@ ${(() => {
             return false; // timed out
         }
 
+        function updateMonsterCardDamage(card, damage) {
+            if (!card || typeof damage !== 'number') return;
+
+            const dmgEl = card.querySelector('.statpill .k')?.textContent?.trim() === 'dmg'
+            ? card.querySelector('.statpill .v')
+            : [...card.querySelectorAll('.statpill')]
+            .find(p => p.querySelector('.k')?.textContent?.trim() === 'dmg')
+            ?.querySelector('.v');
+
+            if (!dmgEl) return;
+
+            dmgEl.textContent = damage.toLocaleString();
+        }
+
+        function getEstimatedAttackDamage(atkId) {
+            const entry = learnedAttackDamage.get(atkId);
+
+            // ✅ Slash is always safe-ish, even before learning
+            if (atkId === 'slash') {
+                if (!entry || entry.count < 2) return 1_000_000; // 1M conservative
+                return entry.avg;
+            }
+
+            // ❗ Other attacks: unknown = dangerous
+            if (!entry || entry.count < 3) return Infinity;
+
+            return entry.avg;
+        }
+
+        function isAttackLearned(atkId) {
+            const entry = learnedAttackDamage.get(atkId);
+            return entry && entry.count >= LEARNING_HITS_REQUIRED;
+        }
+
+        function applyLocalExpGain(xpDelta) {
+            if (typeof xpDelta !== 'number' || xpDelta <= 0) return;
+
+            const expWrap = document.querySelector('.gtb-exp');
+            if (!expWrap) return;
+
+            const valueSpan = expWrap.querySelector('.gtb-exp-top span:last-child');
+            const fill = expWrap.querySelector('.gtb-exp-fill');
+
+            if (!valueSpan || !fill) return;
+
+            // Parse "current / max"
+            const match = valueSpan.textContent.match(/([\d,]+)\s*\/\s*([\d,]+)/);
+            if (!match) return;
+
+            let current = Number(match[1].replace(/,/g, '')) || 0;
+            const max = Number(match[2].replace(/,/g, '')) || 0;
+            if (!max) return;
+
+            // Apply XP gain
+            current = Math.min(current + xpDelta, max);
+
+            // Update text
+            valueSpan.textContent =
+                `${current.toLocaleString()} / ${max.toLocaleString()}`;
+
+            // Update bar
+            const percent = Math.max(0, Math.min(100, (current / max) * 100));
+            fill.style.width = `${percent.toFixed(2)}%`;
+        }
+
+        function expectedAttackDamage(atk) {
+            // conservative fallback before learning
+            if (avgDamagePerStamina === null) {
+                return atk.stamina * 1_000_000; // 1M per stamina safety
+            }
+
+            // add variance buffer (crits, rng)
+            return avgDamagePerStamina * atk.stamina * 1.15;
+        }
+
+        function chooseBestAttackForCap(remainingCap, stamina, cap) {
+           // ✅ Allow small overshoot near cap (0.1%)
+           const tolerance = cap * 0.001;
+
+           const ordered = [...ATTACKS]
+           .filter(a => a.stamina <= stamina)
+           .sort((a, b) => b.stamina - a.stamina);
+
+           for (const atk of ordered) {
+               const est = expectedAttackDamage(atk);
+
+               // ✅ THIS is where tolerance belongs
+               if (est <= remainingCap + tolerance) {
+                   return atk;
+               }
+           }
+
+           // ✅ Fallback: slash only if nothing fits
+           return ATTACKS.find(a => a.id === 'slash');
+       }
+
+        function updateDamagePerStamina(deltaDamage, staminaCost) {
+            if (staminaCost <= 0 || deltaDamage <= 0) return;
+
+            const dps = deltaDamage / staminaCost;
+
+            if (avgDamagePerStamina === null) {
+                avgDamagePerStamina = dps;
+            } else {
+                // smooth exponential average
+                avgDamagePerStamina = avgDamagePerStamina * 0.85 + dps * 0.15;
+            }
+        }
 
         /* ================== EXP CAP FETCH ================== */
 
@@ -12999,6 +13106,37 @@ ${(() => {
 
             monsterCaps.set(dgmid, cap);
             return cap;
+        }
+
+        async function fetchMonsterCapAndDamage(dgmid) {
+            setStatus('📊 Fetching EXP cap & damage…');
+
+            const html = await fetch(
+                `/battle.php?dgmid=${dgmid}&instance_id=${INSTANCE_ID}`,
+                { credentials: 'include' }
+            ).then(r => r.text());
+
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+
+            // ✅ EXP CAP
+            const capBlock = [...doc.querySelectorAll('.stat-block')]
+            .find(b => b.querySelector('.label')?.textContent.trim() === 'EXP Cap');
+
+            const cap =
+                  Number(
+                      capBlock?.querySelector('div')
+                      ?.textContent.match(/([\d,]+)/)?.[1]
+                      ?.replace(/,/g, '')
+                  ) || null;
+
+            // ✅ YOUR DAMAGE (authoritative)
+            const dmgText =
+                  doc.querySelector('#yourDamageValue')?.textContent;
+
+            const damage =
+                  dmgText ? Number(dmgText.replace(/[^\d]/g, '')) : 0;
+
+            return { cap, damage };
         }
 
         /* ================== POTIONS ================== */
@@ -13195,24 +13333,45 @@ ${(() => {
 
                 if (!dgmid) continue;
                 if (!await joinDungeonBattle(dgmid)) continue;
+                let initialMonsterDamage = 0;
+
+
 
                 /* ================== DETERMINE CAP ================== */
 
                let cap = null;
 
+
+
                 if (damageMode === 'exp') {
-                    cap = await fetchMonsterCap(dgmid);
+                    const data = await fetchMonsterCapAndDamage(dgmid);
+                    cap = data.cap;
+                    initialMonsterDamage = data.damage;
                 }
 
                 else if (damageMode === 'global') {
                     cap = playerDamageValue > 0 ? playerDamageValue : null;
+                    initialMonsterDamage = 0;
                 }
 
                 else if (damageMode === 'monster') {
                     const key = normalizeName(monsterName);
                     const customCap = monsterPlayerCaps.get(key);
                     cap = customCap > 0 ? customCap : null;
+                    initialMonsterDamage = 0;
                 }
+
+                monsterDamageTracker.set(dgmid, initialMonsterDamage);
+                monsterLastDamage.set(dgmid, initialMonsterDamage);
+               // else if (damageMode === 'global') {
+               //     cap = playerDamageValue > 0 ? playerDamageValue : null;
+               // }
+
+               // else if (damageMode === 'monster') {
+               //     const key = normalizeName(monsterName);
+               //     const customCap = monsterPlayerCaps.get(key);
+               //     cap = customCap > 0 ? customCap : null;
+               // }
 
 
 
@@ -13236,14 +13395,50 @@ ${(() => {
                 /* ================== ATTACK LOOP ================== */
 
                 let finalSlashUsed = false;
-
                 while (!paused) {
                     lastDamage = damage;
 
-                    const baseAttack =
-                        ATTACKS.find(a => a.id === selectedAttack) || ATTACKS[0];
+                    // ✅ Read authoritative damage from monster card (predictive)
+                    const currentDamage = monsterDamageTracker.get(dgmid) ?? damage;
+                    // ✅ Soft-cap math based on EXP cap
+                    const learned = isAttackLearned(selectedAttack);
 
-                    let atk = downgradeAtkSmart(baseAttack.id, getCurrentStamina());
+                    const rawEstimate = getEstimatedAttackDamage(selectedAttack);
+                    const estimatedNextHit =
+                          Number.isFinite(rawEstimate) ? rawEstimate * 1.15 : Infinity;
+
+                    // ✅ Allow big attacks during learning phase
+                    const willOvercap =
+                          learned &&
+                          typeof cap === 'number' &&
+                          currentDamage + estimatedNextHit >= cap;
+
+
+                    const stamina = getCurrentStamina();
+                    const remainingCap =
+                          typeof cap === 'number' ? cap - currentDamage : Infinity;
+
+                    // ✅ Only engage smart cap logic when NEAR cap
+                    const NEAR_CAP_RATIO = 0.25; // 25%
+
+                    let atk;
+
+                    if (
+                        typeof cap === 'number' &&
+                        remainingCap <= cap * NEAR_CAP_RATIO
+                    ) {
+                        atk = chooseBestAttackForCap(
+                            remainingCap,
+                            stamina,
+                            cap
+                        );
+                    } else {
+                        const baseAttack =
+                              ATTACKS.find(a => a.id === selectedAttack) || ATTACKS[0];
+
+                        atk = downgradeAtkSmart(baseAttack.id, stamina);
+                    }
+
 
                     /* --- Local stamina exhaustion --- */
                     if (!atk) {
@@ -13252,7 +13447,19 @@ ${(() => {
                         atk = ATTACKS[0]; // slash (1 stamina)
                     }
 
+                // ✅ HARD STOP before overcapping
+               const slashEst = getEstimatedAttackDamage('slash');
 
+                    const slashLearned = isAttackLearned('slash');
+
+                    if (
+                        slashLearned &&
+                        typeof cap === 'number' &&
+                        currentDamage + slashEst >= cap
+                    ) {
+                        setStatus(`✅ Stopping safely – even slash would overcap`);
+                        break;
+                    }
                     const result = await attackMonster(dgmid, atk);
                     if (typeof result?.stamina === 'number') {
                         updateStaminaUI(result.stamina);
@@ -13333,7 +13540,25 @@ ${(() => {
                         continue;
                     }
 
-                    damage = getMyDamage(result);
+                    const total = getMyDamage(result);
+                    damage = Math.max(0, total - initialMonsterDamage);
+                    monsterDamageTracker.set(dgmid, damage);
+                    // ✅ Apply EXP locally using server delta
+                    if (typeof result?.xp_delta === 'number') {
+                        applyLocalExpGain(result.xp_delta);
+                    }
+
+                    // 🧠 Learn actual damage from this attack
+                    const prev = monsterLastDamage.get(dgmid) ?? 0;
+                    const delta = damage - prev;
+
+                    monsterLastDamage.set(dgmid, damage);
+
+                    // ✅ Learn damage per stamina (global)
+                    if (delta > 0 && atk?.stamina) {
+                        updateDamagePerStamina(delta, atk.stamina);
+                    }
+
 
 
 
@@ -13870,3 +14095,6 @@ ${(() => {
     createCAFUI(caf);
 
 })();
+
+
+
