@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.17.3
+// @version      2.17.4
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -97,13 +97,15 @@ function isExceptionPage() {
         {key: 'qol_revamp',       label: 'Modified QoL Section'},
         {key: 'boss_spawn_alert', label: 'Boss spawn popup alert' },
         {key: 'custom_auto_farm', label: 'Custom Auto Farm' },
-
+        {key: 'hide_autohunt',    label: 'hide AutoHunt'},
 
         // { key: 'membersInRed',         label: 'Highlight guild members in red' },
 
         // 🔒 These two are hidden unless Wave Enhanced Controls is detected
         {key: 'mob_filter_dropdown',label: 'Compress monster filter to dropdown',hiddenUnless: 'waveEnhanced'},
         {key: 'autohunt_collapse',  label: 'Collapse AutoHunt',hiddenUnless: 'waveEnhanced'},
+
+
     ];
 
     // Defaults = ON
@@ -10162,6 +10164,24 @@ const style = document.createElement("style");
 
 })();
 
+//hide autohunt
+(function() {
+     if (!vv.isOn('hide_autohunt')) return;
+    'use strict';
+
+    function removePanels() {
+        document.getElementById('wave-addon-filter-panel')?.remove();
+        document.getElementById('wave-addon-combat-panel')?.remove();
+    }
+
+    // Initial run
+    removePanels();
+
+    // Keep removing if the page re-inserts them
+    const observer = new MutationObserver(() => removePanels());
+    observer.observe(document.body, { childList: true, subtree: true });
+})();
+
 //QoL Revamp
 (function () {
     if (!vv.isOn('qol_revamp')) return;
@@ -14095,6 +14115,8 @@ ${(() => {
     createCAFUI(caf);
 
 })();
+
+
 
 
 
