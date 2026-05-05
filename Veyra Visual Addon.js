@@ -13285,11 +13285,21 @@ ${(() => {
 
             const text = await res.text();
 
-            // ✅ Try to parse JSON if possible
+            // ✅ ONLY handle Cloudflare 520
+            if (
+                res.status === 520 ||
+                text.includes('Error code 520') ||
+                text.includes('Cloudflare')
+            ) {
+                return {
+                    status: 'cf_520'
+                };
+            }
+
+            // ✅ Original behavior preserved
             try {
                 return JSON.parse(text);
             } catch {
-                // ✅ Normalize non‑JSON server errors (like HTTP 400)
                 return {
                     status: 'error',
                     message: text
@@ -13415,6 +13425,7 @@ ${(() => {
                 /* ================== ATTACK LOOP ================== */
 
                 let finalSlashUsed = false;
+                let cfRetrying = false;
                 while (!paused) {
                     lastDamage = damage;
 
@@ -13481,6 +13492,13 @@ ${(() => {
                         break;
                     }
                     const result = await attackMonster(dgmid, atk);
+                    // ✅ Cloudflare 520 → retry SAME monster
+                    if (result?.status === 'cf_520') {
+                        setStatus('🌐 Cloudflare 520 — retrying same monster...');
+                        cfRetrying = true;              // ✅ ADD THIS
+                        await sleep(1500);
+                        continue;
+                    }
                     if (typeof result?.stamina === 'number') {
                         updateStaminaUI(result.stamina);
                     }
@@ -13591,6 +13609,13 @@ ${(() => {
                     );
 
                     /* ================== EXIT CONDITIONS ================== */
+
+
+                    // ✅ If last loop iteration was Cloudflare retry, ignore exit checks once
+                    if (cfRetrying) {
+                        cfRetrying = false;
+                        continue;
+                    }
 
                     if (typeof cap === 'number' && damage >= cap) {
                         setStatus(
