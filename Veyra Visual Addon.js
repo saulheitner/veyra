@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.17.4
+// @version      2.17.5
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -13490,7 +13490,7 @@ ${(() => {
                     if (
                         result?.status === 'error' &&
                         typeof result.message === 'string' &&
-                        result.message.toLowerCase().includes('dead')
+                        result.message.toLowerCase().includes('you are dead')
                     ) {
                         setStatus(
                             `❤️ You died on ${monsterName} ` +
@@ -13609,7 +13609,7 @@ ${(() => {
                         break;
                     }
 
-                    await sleep(300);
+                    await sleep(100);
                 }
             }
 
