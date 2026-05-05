@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.17.5
+// @version      2.17.6
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -8578,59 +8578,57 @@ function escapeHtml(str) {
 
 //dungeon pvp match collapser
 (function() {
-if (!vv.isOn('dungeon_pvp_match')) return;
+    if (!vv.isOn('dungeon_pvp_match')) return;
+
+    let SORT_MODE = 'status'; // 'status' | 'match'
+
+    const params = new URLSearchParams(window.location.search);
+
+    const INSTANCE_ID = params.get('instance_id');
+    const NODE_ID     = params.get('node_id');
 
     // Run once DOM is ready
-function init() {
+    function init() {
+        injectSortToggle();
 
-    document.querySelectorAll('.match').forEach(match => {
+        document.querySelectorAll('.match').forEach(match => {
+            match.dataset.collapsed = "1";
+            toggleMatch(match, true);
 
-        // Mark as collapsed by default
-        match.dataset.collapsed = "1";
-
-        // Auto-collapse on page load
-        toggleMatch(match, true);
-
-        // Add click listeners to badges
-        match.querySelectorAll('.badge').forEach(badge => {
-
-            badge.style.cursor = "pointer";
-
-            badge.addEventListener('click', () => {
-
-                const collapsed = match.dataset.collapsed === "1";
-                match.dataset.collapsed = collapsed ? "0" : "1";
-
-                toggleMatch(match, !collapsed);
+            match.querySelectorAll('.badge').forEach(badge => {
+                badge.style.cursor = "pointer";
+                badge.addEventListener('click', () => {
+                    const collapsed = match.dataset.collapsed === "1";
+                    match.dataset.collapsed = collapsed ? "0" : "1";
+                    toggleMatch(match, !collapsed);
+                });
             });
-
         });
-    });
 
-    applyStatusOrder();
-    highlightSelfMarked();
-    copyRewardsToTop();
-
-}
+        applySorting();
+        highlightSelfMarked();
+        copyRewardsToTop();
+        injectJoinButtons();
+    }
     // Hide everything except matchTop + meta
-function toggleMatch(match, collapse) {
+    function toggleMatch(match, collapse) {
 
-    const keep = ['.matchTop', '.meta','.slots'];
+        const keep = ['.matchTop', '.meta','.slots'];
 
-    // Adjust container height
-    match.style.minHeight = collapse ? "120px" : "330px";
+        // Adjust container height
+        match.style.minHeight = collapse ? "120px" : "330px";
 
-    Array.from(match.children).forEach(child => {
+        Array.from(match.children).forEach(child => {
 
-        const shouldKeep = keep.some(sel => child.matches(sel));
+            const shouldKeep = keep.some(sel => child.matches(sel));
 
-        if (shouldKeep) {
-            child.style.display = "";
-        } else {
-            child.style.display = collapse ? "none" : "";
-        }
-    });
-}
+            if (shouldKeep) {
+                child.style.display = "";
+            } else {
+                child.style.display = collapse ? "none" : "";
+            }
+        });
+    }
     // Wait until the .match elements exist
     function waitForMatches() {
         const exists = document.querySelector('.match');
@@ -8639,64 +8637,129 @@ function toggleMatch(match, collapse) {
     }
     waitForMatches();
 
-function copyRewardsToTop() {
-    document.querySelectorAll('.match').forEach(match => {
+    function copyRewardsToTop() {
+        document.querySelectorAll('.match').forEach(match => {
 
-        const rewardItems = match.querySelectorAll('.rewardItem');
-        if (!rewardItems.length) return;
+            const rewardItems = match.querySelectorAll('.rewardItem');
+            if (!rewardItems.length) return;
 
-        const rewards = [];
+            const rewards = [];
 
-        rewardItems.forEach(item => {
-            const name = item.querySelector('.rewardName')?.textContent.trim();
-            const qty  = item.querySelector('.rewardQty')?.textContent.trim();
-            if (name && qty) rewards.push(`${name} ${qty}`);
+            rewardItems.forEach(item => {
+                const name = item.querySelector('.rewardName')?.textContent.trim();
+                const qty  = item.querySelector('.rewardQty')?.textContent.trim();
+                if (name && qty) rewards.push(`${name} ${qty}`);
+            });
+
+            if (!rewards.length) return;
+
+            // Create or reuse reward summary container
+            let rewardSummary = match.querySelector('.rewardSummary');
+            if (!rewardSummary) {
+                rewardSummary = document.createElement('div');
+                rewardSummary.className = 'rewardSummary';
+                rewardSummary.style.fontSize = '12px';
+                rewardSummary.style.opacity = '0.9';
+                rewardSummary.style.marginTop = '4px';
+
+                // Insert under title inside matchTop
+                const matchTop = match.querySelector('.meta');
+                matchTop.appendChild(rewardSummary);
+            }
+
+            rewardSummary.textContent = `Rewards: ${rewards.join(', ')}`;
         });
+    }
 
-        if (!rewards.length) return;
+    function injectSortToggle() {
+    if (document.querySelector('#matchSortToggle')) return;
 
-        // Create or reuse reward summary container
-        let rewardSummary = match.querySelector('.rewardSummary');
-        if (!rewardSummary) {
-            rewardSummary = document.createElement('div');
-            rewardSummary.className = 'rewardSummary';
-            rewardSummary.style.fontSize = '12px';
-            rewardSummary.style.opacity = '0.9';
-            rewardSummary.style.marginTop = '4px';
+    const toggleWrap = document.createElement('div');
+    toggleWrap.style.cssText = `
+        margin-top: 8px;
+        display: flex;
+        justify-content: flex-start;
+    `;
 
-            // Insert under title inside matchTop
-            const matchTop = match.querySelector('.meta');
-            matchTop.appendChild(rewardSummary);
-        }
+    const toggle = document.createElement('button');
+    toggle.id = 'matchSortToggle';
+    toggle.className = 'btn';
+    toggle.textContent = SORT_MODE === 'status'
+        ? 'Sort: Status'
+        : 'Sort: Match #';
 
-        rewardSummary.textContent = `Rewards: ${rewards.join(', ')}`;
+    toggle.style.cssText = `
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+        border-radius: 12px;
+    `;
+
+    toggle.addEventListener('click', () => {
+        SORT_MODE = SORT_MODE === 'status' ? 'match' : 'status';
+        toggle.textContent = SORT_MODE === 'status'
+            ? 'Sort: Status'
+            : 'Sort: Match #';
+
+        applySorting();
     });
+
+    toggleWrap.appendChild(toggle);
+
+    // ✅ Insert right after .warn
+    const warn = document.querySelector('.card .warn');
+    if (warn) {
+        warn.insertAdjacentElement('afterend', toggleWrap);
+    }
 }
 
-function applyStatusOrder() {
-    const orderMap = {
-        open: 2,
-        live: 3,
-        cleared: 4
-    };
-
-    document.querySelectorAll('.match').forEach(match => {
-        const badge = match.querySelector('.badge');
-        const slots = match.querySelector('.slots .slot.selfMark');
-
-        // If selfMark present → go to top
-        if (slots) {
-            match.style.order = 1;   // highest priority
-            return;
+    function applySorting() {
+        if (SORT_MODE === 'match') {
+            applyMatchNumberOrder();
+        } else {
+            applyStatusOrder();
         }
+    }
 
-        // Otherwise use regular status order
-        if (badge) {
-            const status = badge.textContent.trim().toLowerCase();
-            match.style.order = orderMap[status] || 99;
-        }
-    });
-}
+    function applyStatusOrder() {
+        const orderMap = {
+            open: 2,
+            live: 3,
+            cleared: 4
+        };
+
+        document.querySelectorAll('.match').forEach(match => {
+            const badge = match.querySelector('.badge');
+            const slots = match.querySelector('.slots .slot.selfMark');
+
+            // If selfMark present → go to top
+            if (slots) {
+                match.style.order = 1;   // highest priority
+                return;
+            }
+
+            // Otherwise use regular status order
+            if (badge) {
+                const status = badge.textContent.trim().toLowerCase();
+                match.style.order = orderMap[status] || 99;
+            }
+        });
+    }
+
+    function applyMatchNumberOrder() {
+        document.querySelectorAll('.match').forEach(match => {
+            const selfSlot = match.querySelector('.slots .slot.selfMark');
+            if (selfSlot) {
+                match.style.order = 1;
+                return;
+            }
+
+            const metaText = match.querySelector('.meta span')?.textContent || '';
+            const matchNo = metaText.match(/Match\s+#(\d+)/i)?.[1];
+
+            match.style.order = matchNo ? Number(matchNo) + 10 : 99;
+        });
+    }
 
     function highlightSelfMarked() {
     document.querySelectorAll('.match').forEach(match => {
@@ -8711,6 +8774,72 @@ function applyStatusOrder() {
         }
     });
 }
+
+    function injectJoinButtons() {
+        document.querySelectorAll('.match').forEach(match => {
+            const matchNo = match.querySelector('.meta span')
+            ?.textContent.match(/Match\s+#(\d+)/)?.[1];
+            if (!matchNo) return;
+
+            match.querySelectorAll('.slot').forEach((slot, i) => {
+
+                const hasPlayer =
+                      slot.querySelector('.name') ||
+                      slot.querySelector('img');
+
+                // ❌ Occupied slot → ensure no Join button
+                if (hasPlayer) {
+                    slot.querySelector('.joinBtn')?.remove();
+                    return;
+                }
+
+                // ✅ Prevent duplicates
+                if (slot.querySelector('.joinBtn')) return;
+
+                const btn = document.createElement('button');
+                btn.className = 'btn joinBtn';
+                btn.textContent = 'Join';
+
+                btn.addEventListener('click', () => {
+                    btn.disabled = true;
+                    btn.textContent = 'Joining…';
+                    joinMatchSlot(matchNo, i + 1);
+                });
+
+                slot.appendChild(btn);
+            });
+        });
+    }
+
+    function joinMatchSlot(matchNo, slotIndex) {
+        fetch('/pvp_style_action.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+            },
+            body: new URLSearchParams({
+                source: 'cube',
+                action: 'pick_slot',
+                instance_id: INSTANCE_ID,
+                node_id: NODE_ID,
+                match_no: matchNo,
+                slot_index: slotIndex
+            })
+        })
+            .then(r => r.json())
+            .then(res => {
+            if (res?.success) {
+                location.reload();
+            } else {
+                console.warn('Join failed:', res);
+                location.reload();
+            }
+        })
+            .catch(err => {
+            console.error('Join error:', err);
+            location.reload();
+        });
+    }
 
 })();
 
