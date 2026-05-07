@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.17.6
+// @version      2.18.1
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -36,6 +36,49 @@ function isExceptionPage() {
    (paste near top of file, after the userscript header)
 ============================ */
 (function() {
+
+    const ahabAuth = new Promise((resolve) => {
+
+    const tryResolve = () => {
+        const link = document.querySelector('#sideDrawer a[href*="player.php?pid="]');
+        if (!link) return false;
+
+        const pid = new URL(link.href).searchParams.get("pid");
+        if (!pid) return false;
+
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: `https://demonicscans.org/player.php?pid=${pid}`,
+            withCredentials: true,
+
+            onload(res) {
+                const doc = new DOMParser().parseFromString(res.responseText, "text/html");
+                const nameEl =
+                    doc.querySelector(".profile-name") ||
+                    doc.querySelector("h1") ||
+                    doc.body;
+
+                const hasAhab = (nameEl.textContent || "").includes("[AHAB]");
+                console.log("AHAB detected:", hasAhab);
+                resolve(hasAhab);
+            },
+
+            onerror: () => resolve(false)
+        });
+
+        return true;
+    };
+
+    // ✅ Try immediately
+    if (tryResolve()) return;
+
+    // ✅ Otherwise wait until drawer appears
+    const obs = new MutationObserver(() => {
+        if (tryResolve()) obs.disconnect();
+    });
+
+    obs.observe(document.body, { childList: true, subtree: true });
+});
 
     function isExceptionPage() {
         // Normalize URL for robust matching
@@ -137,6 +180,9 @@ function isExceptionPage() {
     }
 
     function setFlag(key, val) {
+        // 🔒 block enabling if not AHAB
+        if (window.vv?.ahabLocked && val === true) return;
+
         const flags = loadFlags();
         flags[key] = !!val;
         saveFlags(flags);
@@ -147,6 +193,20 @@ function isExceptionPage() {
         for (const k of Object.keys(flags)) flags[k] = !!val;
         saveFlags(flags);
     }
+
+    // Run auth check once and enforce restrictions
+    ahabAuth.then(hasAhab => {
+        if (!hasAhab) {
+
+            console.warn("AHAB not detected → disabling all features");
+
+            setAll(false); // 🔴 turn EVERYTHING OFF
+
+            // optional: mark locked
+            window.vv = window.vv || {};
+            window.vv.ahabLocked = true;
+        }
+    });
 
     // Quick helper a module can call at the very top:
     //   if (!vv.isOn('top_hp_mp')) return;
@@ -208,7 +268,11 @@ function isExceptionPage() {
         document.head.appendChild(style);
     }
 
-    function openPanel() {
+    async function openPanel() {
+
+const hasAhab = await ahabAuth;
+const isLocked = !hasAhab;
+
         injectStylesOnce();
         let overlay = document.getElementById('vv-flags-overlay');
         if (!overlay) {
@@ -250,22 +314,44 @@ function isExceptionPage() {
             label.textContent = f.label;
 
             const sw = document.createElement('div');
-            sw.className = 'vv-switch';
-            sw.dataset.on = flags[f.key] ? '1' : '0';
-            sw.setAttribute('role', 'switch');
-            sw.setAttribute('aria-checked', flags[f.key] ? 'true' : 'false');
-            sw.title = flags[f.key] ? 'On' : 'Off';
+sw.className = 'vv-switch';
+sw.setAttribute('role', 'switch');
 
-            const knob = document.createElement('div');
-            knob.className = 'vv-knob';
-            sw.appendChild(knob);
-            sw.addEventListener('click', () => {
-                const now = sw.dataset.on === '1';
-                setFlag(f.key, !now);
-                sw.dataset.on = !now ? '1' : '0';
-                sw.setAttribute('aria-checked', !now ? 'true' : 'false');
-                reloadNote.style.display = '';
-            });
+const knob = document.createElement('div');
+knob.className = 'vv-knob';
+sw.appendChild(knob);
+
+/* ✅ CORRECT LOCK CHECK */
+
+
+// Force OFF only when actually locked
+sw.dataset.on = (!isLocked && flags[f.key]) ? '1' : '0';
+sw.setAttribute(
+    'aria-checked',
+    sw.dataset.on === '1' ? 'true' : 'false'
+);
+
+if (isLocked) {
+    sw.style.opacity = "0.5";
+    sw.style.pointerEvents = "none";
+    sw.title = "AHAB required";
+} else {
+    sw.title = sw.dataset.on === '1' ? 'On' : 'Off';
+
+    sw.addEventListener('click', () => {
+        const now = sw.dataset.on === '1';
+        setFlag(f.key, !now);
+
+        sw.dataset.on = !now ? '1' : '0';
+        sw.setAttribute(
+            'aria-checked',
+            !now ? 'true' : 'false'
+        );
+
+        reloadNote.style.display = '';
+    });
+}
+
 
             row.append(label, sw);
             list.appendChild(row);
@@ -1126,6 +1212,15 @@ function modifySideNav() {
         </a>
       </div>
     `;
+      // Classes — Secondary Classes
+        const classesSectionHTML = `
+      <div style="margin-left: 15px; padding: 6px; background: rgba(30, 30, 46, 0.5); border-radius: 4px; border-left: 2px solid #0f0f0f;">
+        <a style="text-decoration: none; color:white;" href="secondary_classes.php">
+		  <span class="side-icon">☾</span>
+          <span class="side-label">Secondary Class</span>
+        </a>
+      </div>
+    `;
 
 
         // ------------------------------
@@ -1163,6 +1258,8 @@ function modifySideNav() {
             '/pvp.php',
             '/merchant.php',
             '/blacksmith.php', // keep real href for order/disable, but we will block navigation
+            '/classes.php',
+
         ]
         .filter(href => !hiddenSet.has(href))
             .forEach(href => {
@@ -1283,6 +1380,15 @@ function modifySideNav() {
                 anchorHref: '/blacksmith.php',
                 where: 'after'
             },
+
+            {
+                id: 'classes-expanded',
+                className: 'upgrade-section',
+                html: classesSectionHTML,
+                anchorHref: '/classes.php',
+                where: 'after'
+            },
+
         ];
 
         placements.forEach(p => {
@@ -8672,46 +8778,51 @@ function escapeHtml(str) {
     }
 
     function injectSortToggle() {
-    if (document.querySelector('#matchSortToggle')) return;
+        if (document.querySelector('#matchSortToggle')) return;
 
-    const toggleWrap = document.createElement('div');
-    toggleWrap.style.cssText = `
+        const toggleWrap = document.createElement('div');
+        toggleWrap.style.cssText = `
         margin-top: 8px;
         display: flex;
         justify-content: flex-start;
     `;
 
-    const toggle = document.createElement('button');
-    toggle.id = 'matchSortToggle';
-    toggle.className = 'btn';
-    toggle.textContent = SORT_MODE === 'status'
-        ? 'Sort: Status'
+        const toggle = document.createElement('button');
+        toggle.id = 'matchSortToggle';
+        toggle.className = 'btn';
+        toggle.textContent = SORT_MODE === 'status'
+            ? 'Sort: Status'
         : 'Sort: Match #';
 
-    toggle.style.cssText = `
+        toggle.style.cssText = `
         padding: 6px 10px;
         font-size: 12px;
         cursor: pointer;
         border-radius: 12px;
     `;
 
-    toggle.addEventListener('click', () => {
-        SORT_MODE = SORT_MODE === 'status' ? 'match' : 'status';
-        toggle.textContent = SORT_MODE === 'status'
-            ? 'Sort: Status'
+        toggle.addEventListener('click', () => {
+            SORT_MODE = SORT_MODE === 'status' ? 'match' : 'status';
+            toggle.textContent = SORT_MODE === 'status'
+                ? 'Sort: Status'
             : 'Sort: Match #';
 
-        applySorting();
-    });
+            applySorting();
+        });
 
-    toggleWrap.appendChild(toggle);
+        toggleWrap.appendChild(toggle);
 
-    // ✅ Insert right after .warn
-    const warn = document.querySelector('.card .warn');
-    if (warn) {
-        warn.insertAdjacentElement('afterend', toggleWrap);
+        // ✅ Try .warn first, fallback to .note
+        const warn = document.querySelector('.card .warn');
+        if (warn) {
+            warn.insertAdjacentElement('afterend', toggleWrap);
+        } else {
+            const note = document.querySelector('.card .note');
+            if (note) {
+                note.insertAdjacentElement('afterend', toggleWrap);
+            }
+        }
     }
-}
 
     function applySorting() {
         if (SORT_MODE === 'match') {
