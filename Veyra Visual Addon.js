@@ -1,16 +1,18 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.18.1
+// @version      2.18.3
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
 // @author       Daregon
 // @match        https://demonicscans.org/*
 // @grant        GM_xmlhttpRequest
+// @grant unsafeWindow
 // @connect      demonicscans.org
 // @license MIT
 // ==/UserScript==
+
 
 function isExceptionPage() {
     // Normalize URL for robust matching
@@ -28,42 +30,54 @@ function isExceptionPage() {
     // If any target is present in the path or full URL → exception
     return targets.some(t => path.includes(t) || href.includes(t));
 }
-//// ✅ URL exceptions for woobs.init()
-//  if (isExceptionPage()) return true;
 
 /* ============================
    Veyra Visual Addon — Feature Flags + Control Panel
-   (paste near top of file, after the userscript header)
 ============================ */
 (function() {
 
     const ahabAuth = new Promise((resolve) => {
-
+        // ✅ fallback timeout (VERY IMPORTANT for mobile)
+        const fallbackTimer = setTimeout(() => {
+            console.warn("AHAB detection timeout → assuming TRUE (fail-safe)");
+            resolve(true); // ✅ don't lock users incorrectly
+        }, 4000);
     const tryResolve = () => {
-        const link = document.querySelector('#sideDrawer a[href*="player.php?pid="]');
+        const link =
+              document.querySelector('#sideDrawer a[href*="player.php?pid="]') ||
+              document.querySelector('a[href*="player.php?pid="]'); // ✅ fallback for mobile
+
         if (!link) return false;
+
 
         const pid = new URL(link.href).searchParams.get("pid");
         if (!pid) return false;
 
-        GM_xmlhttpRequest({
-            method: "GET",
-            url: `https://demonicscans.org/player.php?pid=${pid}`,
-            withCredentials: true,
+        fetch(`https://demonicscans.org/player.php?pid=${pid}`, {
+            credentials: "include"
+        })
+            .then(res => res.text())
+            .then(html => {
+            const doc = new DOMParser().parseFromString(html, "text/html");
 
-            onload(res) {
-                const doc = new DOMParser().parseFromString(res.responseText, "text/html");
-                const nameEl =
-                    doc.querySelector(".profile-name") ||
-                    doc.querySelector("h1") ||
-                    doc.body;
+            const nameEl =
+                  doc.querySelector(".profile-name") ||
+                  doc.querySelector("h1") ||
+                  doc.body;
 
-                const hasAhab = (nameEl.textContent || "").includes("[AHAB]");
-                console.log("AHAB detected:", hasAhab);
-                resolve(hasAhab);
-            },
+            const text = (nameEl.textContent || "").trim();
 
-            onerror: () => resolve(false)
+            // ✅ more robust check (mobile sometimes trims weirdly)
+            const hasAhab = /\[AHAB\]/i.test(text);
+
+            console.log("AHAB text:", text);
+            console.log("AHAB detected:", hasAhab);
+
+            clearTimeout(fallbackTimer); // ✅ stop fallback
+            resolve(hasAhab);        })
+            .catch(() => {
+            clearTimeout(fallbackTimer); // ✅ stop fallback
+            resolve(true); // ✅ DON'T lock user if request fails
         });
 
         return true;
@@ -71,6 +85,14 @@ function isExceptionPage() {
 
     // ✅ Try immediately
     if (tryResolve()) return;
+        // ✅ mobile fallback retry
+        let tries = 0;
+        const retry = setInterval(() => {
+            if (tryResolve() || tries++ > 10) {
+                clearInterval(retry);
+            }
+        }, 500);
+        ``
 
     // ✅ Otherwise wait until drawer appears
     const obs = new MutationObserver(() => {
@@ -1109,7 +1131,14 @@ function modifySideNav() {
             <a style="text-decoration: none; color:white;" href="/active_wave.php?gate=5&wave=9">
               <span class="side-icon">⚔️</span>
               <span class="side-label">Wave 1 </span>
-              <span class="side-icon">⚡️ 🔱 🛡️</span>
+              <span class="side-icon">🏛️ 🔱 🛡️</span>
+            </a>
+          </div>
+          <div style="font-size:12px;margin-left: 15px; padding: 6px; background: rgba(30, 30, 46, 0.5); border-radius: 4px; border-left: 2px solid #e59f5a;">
+            <a style="text-decoration: none; color:white;" href="/active_wave.php?gate=5&wave=10">
+              <span class="side-icon">⚔️</span>
+              <span class="side-label">Hermes </span>
+              <span class="side-icon">🏛️ ⚚ 🛡️</span>
             </a>
           </div>
         </div>
@@ -10123,26 +10152,19 @@ listDiv.appendChild(card);
        Determine active match
     ====================== */
 
-    async function getActiveMatchNo(battleId) {
-        const payload = new URLSearchParams({
-            action: "get_state",
-            battle_id: battleId
-        });
+function getMatchNoFromBattleName() {
+    for (const s of document.scripts) {
+        if (!s.textContent) continue;
 
-        const res = await fetch(STATE_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-            },
-            body: payload
-        });
-
-        const data = await res.json();
-        if (!data.ok) return 1;
-
-        // This field tells us which match you're engaged in
-        return data.state.viewer.other_active_match_no || 1;
+        // Match: "Worldroot Siege - Fight #3"
+        const m = s.textContent.match(/Fight\s*#(\d+)/i);
+        if (m) {
+            return Number(m[1]);
+        }
     }
+    return 1;
+}
+
 
     /* ======================
        Contributors fetch
@@ -10195,23 +10217,17 @@ listDiv.appendChild(card);
             "node", ids.nodeId
         );
 
-        let cachedMatchNo = null;
+       let matchNo = null;
 
-        setInterval(async () => {
-            // Derive battle_id from instance (same mapping UI uses)
-            const battleId = ids.instanceId;
+setInterval(async () => {
+    matchNo = matchNo ?? getMatchNoFromBattleName();
 
-            cachedMatchNo =
-                cachedMatchNo ??
-                await getActiveMatchNo(battleId);
-
-            const dmg = await fetchMyDamage(
-                ids.instanceId,
-                ids.nodeId,
-                cachedMatchNo,
-                myUserId
-            );
-
+    const dmg = await fetchMyDamage(
+        ids.instanceId,
+        ids.nodeId,
+        matchNo,
+        myUserId
+    );
             const box = document.getElementById("myDamageTracker");
             if (box) {
                 box.innerText =
@@ -11904,6 +11920,9 @@ function getDisplayGateWave(gate, wave) {
   if (gate === 5 && wave === 9) {
     return { gate: 2, wave: 1 };
   }
+  if (gate === 5 && wave === 10) {
+    return { gate: 2, wave: 2 };
+  }
   return { gate, wave };
 }
 
@@ -11911,7 +11930,8 @@ function getDisplayGateWave(gate, wave) {
 
   const gatesConfig = [
     { gate: 3, wave: 8 },
-    { gate: 5, wave: 9 }
+    { gate: 5, wave: 9 },
+    { gate: 5, wave: 10}
   ];
 
   /* ================= ALERT SYSTEM ================= */
@@ -12974,6 +12994,11 @@ ${(() => {
         const STAMINA_POTION_EXP_LIMIT = 0.80; // 80%
         const STAMINA_POTION_RESTORE = 5000;
 
+        const SMALL_MANA_POTION_NAME = 'mana potion s';
+        const SMALL_MANA_POTION_RESTORE = 20;
+        const SMALL_MANA_POTION_BURST = 9; // use 9 at once
+        const MANA_POTION_DELAY = 350; // ms between uses (safe vs CF)
+
         const selectedMonsters = new Set();
         const monsterCaps = new Map(); // dgmid -> cap
         const monsterPenalties = new Map(); // name -> skip count
@@ -13006,32 +13031,68 @@ ${(() => {
         //const SOFT_CAP_BUFFER = 2000;  // extra safety buffer
 
 
-        const ATTACKS = [{
-                id: 'slash',
-                stamina: 1,
-                skill: 0
-            },
-            {
-                id: 'power',
-                stamina: 10,
-                skill: -1
-            },
-            {
-                id: 'heroic',
-                stamina: 50,
-                skill: -2
-            },
-            {
-                id: 'ultimate',
-                stamina: 100,
-                skill: -3
-            },
-            {
-                id: 'legendary',
-                stamina: 200,
-                skill: -4
-            }
-        ];
+const ATTACKS = [
+    { id: 'slash', stamina: 1, skill: 0, label: 'Slash' },
+    { id: 'power', stamina: 10, skill: -1, label: 'Power Slash' },
+    { id: 'heroic', stamina: 50, skill: -2, label: 'Heroic Slash' },
+    { id: 'ultimate', stamina: 100, skill: -3, label: 'Ultimate Slash' },
+    { id: 'legendary', stamina: 200, skill: -4, label: 'Legendary Slash' },
+
+
+    {
+        id: 'ironclad_strike',
+        label: 'Ironclad Strike',
+        stamina: 200,
+        mana: 20,
+        skill: 2,
+        class: 'warrior'
+    },
+
+    {
+        id: 'fireball',
+        label: 'Fireball',
+        stamina: 200,
+        mana: 30,
+        skill: 4,
+        class: 'mage'
+    },
+
+    {
+        id: 'backstab',
+        label: 'Backstab',
+        stamina: 200,
+        mana: 20,
+        skill: 6,
+        class: 'hunter'
+    },
+{ id: 'world_breaker_slash', stamina: 1000, skill: -5, label: 'World Breaker Slash' },
+];
+
+const MANA_BUSTERS = {
+    warrior: {
+        id: 3,
+        name: 'Warrior Aura',
+        mpCost: 20
+    },
+    mage: {
+        id: 5,
+        name: 'Arcane Sacrifice',
+        mpCost: 30
+    },
+    hunter: {
+        id: 7,
+        name: 'Killer Instinct',
+        mpCost: 20
+    },
+    cleric: {
+        id: 9,
+        name: 'Judgment Seal',
+        mpCost: 30
+    }
+};
+
+let useManaBuster = false;
+let manaBusterMinStamina = 200; // default threshold
 
 
         const INSTANCE_ID = new URLSearchParams(location.search).get('instance_id');
@@ -13047,6 +13108,8 @@ ${(() => {
         function saveState() {
             const state = {
                 selectedAttack,
+                useManaBuster,
+                manaBusterMinStamina,
                 damageMode,
                 playerDamageValue,
                 allowStaminaPotion,
@@ -13068,9 +13131,16 @@ ${(() => {
                 const state = JSON.parse(raw);
 
                 if (state.selectedAttack) selectedAttack = state.selectedAttack;
+
+                useManaBuster = !!state.useManaBuster;
+
+                if (state.manaBusterMinStamina)
+                    manaBusterMinStamina = state.manaBusterMinStamina;
+
                 if (state.damageMode) damageMode = state.damageMode;
                 if (typeof state.playerDamageValue === 'number')
-                    playerDamageValue = state.playerDamageValue;
+
+                playerDamageValue = state.playerDamageValue;
 
                 allowStaminaPotion = !!state.allowStaminaPotion;
                 allowHpPotion = !!state.allowHpPotion;
@@ -13116,6 +13186,26 @@ ${(() => {
             }
 
             return cachedMaxHp;
+        }
+
+        let cachedMaxMp = null;
+
+        function getMaxMpOnce() {
+            if (cachedMaxMp !== null) return cachedMaxMp;
+
+            const texts = [...document.querySelectorAll('.topbar-hp-wrapper .hp-text')];
+
+            // Find the MP line (contains "MP")
+            const mpText = texts.find(t => t.textContent.includes('MP'));
+            if (!mpText) return null;
+
+            // Example: "💠 200 / 200 MP MP"
+            const match = mpText.textContent.match(/\/\s*([\d,]+)/);
+            if (match) {
+                cachedMaxMp = Number(match[1].replace(/,/g, ''));
+            }
+
+            return cachedMaxMp;
         }
 
         function getExpPercent() {
@@ -13174,6 +13264,29 @@ ${(() => {
 
             if (fill) {
                 const percent = Math.max(0, Math.min(100, (currentHp / maxHp) * 100));
+                fill.style.width = `${percent}%`;
+            }
+        }
+
+        function updateManaUI(currentMp, maxMp) {
+            if (typeof currentMp !== 'number' || typeof maxMp !== 'number') return;
+
+            const wrapper = document.querySelector('.topbar-hp-wrapper');
+            if (!wrapper) return;
+
+            /* --- Update MP text --- */
+            const texts = [...wrapper.querySelectorAll('.hp-text')];
+            const mpText = texts.find(t => t.textContent.includes('MP'));
+
+            if (mpText) {
+                mpText.textContent =
+                    `💠 ${currentMp.toLocaleString()} / ${maxMp.toLocaleString()} MP`;
+            }
+
+            /* --- Update MP bar fill --- */
+            const fill = wrapper.querySelector('.res-fill.mana');
+            if (fill) {
+                const percent = Math.max(0, Math.min(100, (currentMp / maxMp) * 100));
                 fill.style.width = `${percent}%`;
             }
         }
@@ -13336,6 +13449,113 @@ ${(() => {
                 avgDamagePerStamina = avgDamagePerStamina * 0.85 + dps * 0.15;
             }
         }
+
+
+        let playerClass = null;
+
+        async function fetchPlayerClass() {
+            if (playerClass) return playerClass;
+
+            const html = await fetch('/classes.php', {
+                credentials: 'include'
+            }).then(r => r.text());
+
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+
+            const pill = doc.querySelector('.section-classes-pill');
+            const text = pill?.textContent?.toLowerCase() || '';
+
+            if (text.includes('warrior')) playerClass = 'warrior';
+            else if (text.includes('cleric')) playerClass = 'cleric';
+            else if (text.includes('hunter')) playerClass = 'hunter';
+            else if (text.includes('mage')) playerClass = 'mage';
+
+            return playerClass;
+        }
+
+        async function useManaBusterSkill(dgmid) {
+    if (!useManaBuster) return;
+
+    const cls = await fetchPlayerClass();
+    const skill = MANA_BUSTERS[cls];
+    if (!skill || !skill.id) return;
+
+    const form = new FormData();
+    form.append('dgmid', dgmid);
+    form.append('instance_id', INSTANCE_ID);
+    form.append('skill_id', skill.id);
+    form.append('stamina_cost', 1); // always 1
+
+    setStatus(`🔮Using ${skill.name}...`);
+
+    await fetch('damage.php', {
+        method: 'POST',
+        credentials: 'include',
+        body: form
+    });
+
+    await sleep(300);
+}
+
+        async function getManaBusterLabel() {
+            const cls = await fetchPlayerClass();
+            const skill = MANA_BUSTERS[cls];
+            return skill ? skill.name : 'Mana Buster';
+        }
+
+        function getSmallManaPotionInvId() {
+    return [...document.querySelectorAll('.potion-card')]
+        .find(c =>
+            c.querySelector('.potion-name span')
+                ?.textContent.trim().toLowerCase() === SMALL_MANA_POTION_NAME
+        )?.dataset.invId || null;
+}
+
+        async function useSmallManaPotions(count) {
+    const invId = getSmallManaPotionInvId();
+    if (!invId) {
+        setStatus('⛔ No Mana Potion S left');
+        return false;
+    }
+
+    setStatus(`💠 Refilling mana (${count} potions)...`);
+
+    for (let i = 0; i < count; i++) {
+        await fetch('/use_item.php', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+                inv_id: invId
+            }).toString()
+        });
+
+        await sleep(MANA_POTION_DELAY);
+    }
+
+    // ✅ LOCAL MP SYNC (server will confirm later)
+    const maxMp = getMaxMpOnce();
+    if (maxMp) {
+        const mpText = [...document.querySelectorAll('.topbar-hp-wrapper .hp-text')]
+            .find(t => t.textContent.includes('MP'));
+
+        const match = mpText?.textContent.match(/([\d,]+)\s*\//);
+        const currentMp = match
+            ? Number(match[1].replace(/,/g, ''))
+            : 0;
+
+        const restored = Math.min(
+            currentMp + count * SMALL_MANA_POTION_RESTORE,
+            maxMp
+        );
+
+        updateManaUI(restored, maxMp);
+    }
+
+    return true;
+}
 
         /* ================== EXP CAP FETCH ================== */
 
@@ -13731,6 +13951,27 @@ ${(() => {
                         setStatus(`✅ Stopping safely – even slash would overcap`);
                         break;
                     }
+                    // 🔮 Mana Buster trigger (dynamic threshold)
+                    if (
+                        useManaBuster &&
+                        atk.stamina >= manaBusterMinStamina
+                    ) {
+                        await useManaBusterSkill(dgmid);
+                    }
+                    // ❌ Not enough mana for mixed skill
+                    if (atk.mana) {
+                        const mpText = [...document.querySelectorAll('.topbar-hp-wrapper .hp-text')]
+                        .find(t => t.textContent.includes('MP'));
+
+                        const match = mpText?.textContent.match(/([\d,]+)\s*\//);
+                        const currentMp = match ? Number(match[1].replace(/,/g, '')) : 0;
+
+                        if (currentMp < atk.mana) {
+                            setStatus(`⛔ Not enough MP for ${atk.label}`);
+                            await sleep(400);
+                            continue;
+                        }
+                    }
                     const result = await attackMonster(dgmid, atk);
                     // ✅ Cloudflare 520 → retry SAME monster
                     if (result?.status === 'cf_520') {
@@ -13741,6 +13982,19 @@ ${(() => {
                     }
                     if (typeof result?.stamina === 'number') {
                         updateStaminaUI(result.stamina);
+                    }
+
+
+                    if (typeof result?.mana === 'number') {
+                        const maxMp = getMaxMpOnce();
+                        if (maxMp) {
+                            updateManaUI(result.mana, maxMp);
+                        }
+
+                        // 🔋 Auto MP refill trigger (20 or less)
+                        if (result.mana <= 20) {
+                            await useSmallManaPotions(SMALL_MANA_POTION_BURST);
+                        }
                     }
 
 
@@ -13947,6 +14201,20 @@ ${(() => {
                 saveState();
             },
 
+
+            setUseManaBuster: v => {
+                useManaBuster = !!v;
+                saveState();
+            },
+
+            setManaBusterThreshold: v => {
+                manaBusterMinStamina = Number(v) || 50;
+                saveState();
+            },
+
+            getManaBusterThreshold: () => manaBusterMinStamina,
+
+
             clearMonsterPenalties: () => monsterPenalties.clear(),
 
             /* ✅ ADD THESE GETTERS BELOW */
@@ -13958,7 +14226,10 @@ ${(() => {
             getMonsterPenalties: () => new Map(monsterPenalties),
             getMonsterPlayerCaps: () => new Map(monsterPlayerCaps),
             isStaminaPotionAllowed: () => allowStaminaPotion,
-            isHpPotionAllowed: () => allowHpPotion
+            isHpPotionAllowed: () => allowHpPotion,
+            isManaBusterEnabled: () => useManaBuster,
+            getManaBusterLabel,
+            getPlayerClass: () => playerClass,
         };
     }
 
@@ -13979,8 +14250,12 @@ ${(() => {
                 );
         }
 
-        function injectUI() {
+        async function injectUI() {
+
             const wrapper = findWrapper();
+            // ✅ Ensure player class is loaded BEFORE rendering attacks
+            await caf.getManaBusterLabel(); // triggers fetchPlayerClass internally
+            const playerClass = caf.getPlayerClass();
             if (!wrapper || document.getElementById('custom-auto-farm')) return false;
 
             const root = document.createElement('div');
@@ -14031,7 +14306,14 @@ ${(() => {
               background:#0f121d;border:1px solid #303a60;
               padding:8px;width:260px;z-index:10;">
 
-      ${caf.ATTACKS.map(a =>
+      ${caf.ATTACKS.filter(a => {
+                // ✅ Always show normal attacks
+                if (!a.class) return true;
+
+                // ✅ Show mixed skill only for THIS class
+                return a.class === playerClass;
+            }).map(a =>
+
         `<label style="display:flex;gap:6px;font-size:13px;">
           <input type="radio" name="caf-attack" data-attack="${a.id}" ${a.id==='slash'?'checked':''}>
           ${a.label} (${a.stamina})
@@ -14039,6 +14321,26 @@ ${(() => {
       ).join('')}
     </div>
   </div>
+
+<div style="margin-top:8px;font-size:13px;">
+<label style="display:flex;gap:6px;align-items:center;">
+  <input type="checkbox" id="caf-use-mana-buster">
+  🔮Use  <span id="caf-mana-buster-label">Mana Buster</span>
+  <div style="margin-top:6px;font-size:12px;">
+  <div>⚡ Mana Buster Threshold</div>
+
+  <input type="range"
+         id="caf-mana-threshold"
+         min="0"
+         max="3"
+         step="1"
+         style="width:100%;">
+
+  <div id="caf-mana-threshold-label"></div>
+</div>
+
+</label>
+</div>
 
  <div style="margin-bottom:10px;font-size:13px;">
   <div style="font-weight:600;margin-bottom:6px;">
@@ -14166,6 +14468,7 @@ ${(() => {
             document.getElementById('caf-player-dmg').style.display =
                 caf.getDamageMode() === 'player' ? 'block' : 'none';
 
+
             // restore player damage
             document.getElementById('caf-player-dmg').value =
                 caf.getPlayerDamage();
@@ -14176,6 +14479,55 @@ ${(() => {
 
             document.getElementById('caf-use-hp').checked =
                 caf.isHpPotionAllowed();
+
+            //document.getElementById('caf-use-mana-buster').checked = useManaBuster;
+
+            // ✅ restore mana buster checkbox (SAFE)
+            // ✅ Mana Buster checkbox + dynamic label
+            const manaBusterCb = document.getElementById('caf-use-mana-buster');
+            const manaBusterLabel = document.getElementById('caf-mana-buster-label');
+
+            if (manaBusterCb) {
+                manaBusterCb.checked = caf.isManaBusterEnabled();
+
+                manaBusterCb.addEventListener('change', e => {
+                    caf.setUseManaBuster(e.target.checked);
+                });
+
+                // ✅ Set label based on class
+                if (manaBusterLabel) {
+                    caf.getManaBusterLabel().then(name => {
+                        manaBusterLabel.textContent = name;
+                    });
+                }
+            }
+
+            // ✅ Mana Buster slider
+            const slider = document.getElementById('caf-mana-threshold');
+            const label = document.getElementById('caf-mana-threshold-label');
+
+            const VALUES = [50, 100, 200, 1000];
+
+            // restore value
+            const current = caf.getManaBusterThreshold();
+            let index = VALUES.indexOf(current);
+            if (index === -1) index = 2;
+
+            slider.value = index;
+
+            function updateLabel(i) {
+                label.textContent = `Use on ≥ ${VALUES[i]} stamina attacks`;
+            }
+
+            updateLabel(index);
+
+            slider.addEventListener('input', e => {
+                const val = VALUES[Number(e.target.value)];
+                caf.setManaBusterThreshold(val);
+                updateLabel(e.target.value);
+            });
+
+
 
             // restore penalties
             const penalties = caf.getMonsterPenalties();
@@ -14362,16 +14714,15 @@ ${(() => {
             }
         });
 
-        const wait = setInterval(() => {
-
-            if (injectUI()) {
+        const wait = setInterval(async () => {
+            const injected = await injectUI();
+            if (injected) {
                 enableDropdownMouseLeave();
                 enableCollapse();
                 clearInterval(wait);
             }
-
-            ;
         }, 300);
+
     }
 
     /* ===================================================================== */
