@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.18.4
+// @version      2.18.5
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -2845,14 +2845,23 @@ function showExtractionErrorModal(message) {
     const style = document.createElement('style');
     style.textContent = `
     .monster-container{
-      display: flex;
+      display: flex !important;
       flex-direction: row;
       flex-wrap: wrap;
     }
 
-    .monster-card{width:150px;}
-    h3{margin:0;}
+
+.monster-card{
+  width: 150px !important;
+  min-width: 150px !important;
+  max-width: 150px !important;
+}
+
+
+    .monster-card h3{margin:0;}
+
     .stat-value{font-size: 10px;}
+
     .monster-stats {
       position: relative;
     }
@@ -10566,7 +10575,7 @@ document.head.appendChild(style);
 
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-function notifyStatusAndReload(statusBar, message, delay = 2000) {
+    function notifyStatusAndReload(statusBar, message, delay = 2000) {
   if (statusBar) {
     statusBar.textContent = message;
   }
@@ -10575,6 +10584,7 @@ function notifyStatusAndReload(statusBar, message, delay = 2000) {
     location.reload();
   }, delay);
 }
+
     function getLargeStaminaPotionInvId() {
         const cards = document.querySelectorAll(".potion-card");
         for (const card of cards) {
@@ -10723,6 +10733,47 @@ function notifyStatusAndReload(statusBar, message, delay = 2000) {
             return "tm_monster_filter_fallback";
         }
     }
+
+    function updateStaminaBar(staminaValue) {
+        const span = document.getElementById("stamina_span");
+        if (!span) return;
+
+        span.textContent = staminaValue.toLocaleString();
+    }
+
+    function updateExpBar(xpDelta) {
+        if (!xpDelta) return;
+
+        const expWrap = document.querySelector(".gtb-exp");
+        if (!expWrap) return;
+
+        const topText = expWrap.querySelector(".gtb-exp-top span:last-child");
+        const fill = expWrap.querySelector(".gtb-exp-fill");
+
+        if (!topText || !fill) return;
+
+        // Extract numbers: "83,802,851 / 101,203,700"
+        const match = topText.textContent.match(/([\d,]+)\s*\/\s*([\d,]+)/);
+        if (!match) return;
+
+        let current = parseInt(match[1].replace(/,/g, ""), 10);
+        const max = parseInt(match[2].replace(/,/g, ""), 10);
+
+        if (!max || max <= 0) return;
+
+        current += xpDelta;
+
+        // Cap at max (avoid overflow issues)
+        if (current > max) current = max;
+
+        const percent = (current / max) * 100;
+
+        topText.textContent =
+            `${current.toLocaleString()} / ${max.toLocaleString()}`;
+
+        fill.style.width = percent.toFixed(2) + "%";
+    }
+
     // ===================== Wave Section (Alive / Dead) =====================
 function getWaveSection() {
   const card = document.querySelector(".monster-card");
@@ -10838,6 +10889,24 @@ if (!res.ok) {
 let data;
 try {
   data = await res.json();
+    /* ===================== UI LIVE UPDATE ===================== */
+
+// ✅ stamina
+if (typeof data.stamina === "number") {
+  lastKnownStamina = data.stamina;
+  updateStaminaBar(data.stamina);
+}
+
+// ✅ HP (you already had this, keep it)
+if (data?.retaliation?.user_hp_after != null) {
+  updateHpBar(data.retaliation.user_hp_after);
+}
+
+// ✅ EXP
+if (typeof data.xp_delta === "number") {
+  updateExpBar(data.xp_delta);
+}
+
 } catch {
   throw new Error("BAD_JSON");
 }
@@ -13394,16 +13463,29 @@ let manaBusterMinStamina = 200; // default threshold
             const max = Number(match[2].replace(/,/g, '')) || 0;
             if (!max) return;
 
-            // Apply XP gain
-            current = Math.min(current + xpDelta, max);
+            // ✅ Add XP
+            current += xpDelta;
 
-            // Update text
+            let leveled = false;
+
+            // ✅ Handle overflow (level-up behavior)
+            if (current >= max) {
+                current = current % max; // remainder after level-up
+                leveled = true;
+            }
+
+            // ✅ Update text
             valueSpan.textContent =
                 `${current.toLocaleString()} / ${max.toLocaleString()}`;
 
-            // Update bar
+            // ✅ Update bar
             const percent = Math.max(0, Math.min(100, (current / max) * 100));
             fill.style.width = `${percent.toFixed(2)}%`;
+
+            // ✅ Optional: notify level-up
+            if (leveled) {
+                setStatus('✨ Level up! EXP reset');
+            }
         }
 
         function expectedAttackDamage(atk) {
