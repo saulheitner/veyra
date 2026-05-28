@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Veyra Visual Addon
 // @namespace    https://github.com/Daregon-sh/veyra
-// @version      2.18.5
+// @version      2.18.6
 // @downloadURL  https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @updateURL    https://raw.githubusercontent.com/Daregon-sh/veyra/refs/heads/codes/Veyra%20Visual%20Addon.js
 // @description  sidebars visual integration
@@ -35,72 +35,73 @@ function isExceptionPage() {
    Veyra Visual Addon — Feature Flags + Control Panel
 ============================ */
 (function() {
+//disable auth
+    const ahabAuth = Promise.resolve(true);
+// //enable auth
+//     const ahabAuth = new Promise((resolve) => {
+//         // ✅ fallback timeout (VERY IMPORTANT for mobile)
+//         const fallbackTimer = setTimeout(() => {
+//             console.warn("AHAB detection timeout → assuming TRUE (fail-safe)");
+//             resolve(true); // ✅ don't lock users incorrectly
+//         }, 4000);
+//     const tryResolve = () => {
+//         const link =
+//               document.querySelector('#sideDrawer a[href*="player.php?pid="]') ||
+//               document.querySelector('a[href*="player.php?pid="]'); // ✅ fallback for mobile
 
-    const ahabAuth = new Promise((resolve) => {
-        // ✅ fallback timeout (VERY IMPORTANT for mobile)
-        const fallbackTimer = setTimeout(() => {
-            console.warn("AHAB detection timeout → assuming TRUE (fail-safe)");
-            resolve(true); // ✅ don't lock users incorrectly
-        }, 4000);
-    const tryResolve = () => {
-        const link =
-              document.querySelector('#sideDrawer a[href*="player.php?pid="]') ||
-              document.querySelector('a[href*="player.php?pid="]'); // ✅ fallback for mobile
-
-        if (!link) return false;
+//         if (!link) return false;
 
 
-        const pid = new URL(link.href).searchParams.get("pid");
-        if (!pid) return false;
+//         const pid = new URL(link.href).searchParams.get("pid");
+//         if (!pid) return false;
 
-        fetch(`https://demonicscans.org/player.php?pid=${pid}`, {
-            credentials: "include"
-        })
-            .then(res => res.text())
-            .then(html => {
-            const doc = new DOMParser().parseFromString(html, "text/html");
+//         fetch(`https://demonicscans.org/player.php?pid=${pid}`, {
+//             credentials: "include"
+//         })
+//             .then(res => res.text())
+//             .then(html => {
+//             const doc = new DOMParser().parseFromString(html, "text/html");
 
-            const nameEl =
-                  doc.querySelector(".profile-name") ||
-                  doc.querySelector("h1") ||
-                  doc.body;
+//             const nameEl =
+//                   doc.querySelector(".profile-name") ||
+//                   doc.querySelector("h1") ||
+//                   doc.body;
 
-            const text = (nameEl.textContent || "").trim();
+//             const text = (nameEl.textContent || "").trim();
 
-            // ✅ more robust check (mobile sometimes trims weirdly)
-            const hasAhab = /\[AHAB\]/i.test(text);
+//             // ✅ more robust check (mobile sometimes trims weirdly)
+//             const hasAhab = /\[AHAB\]/i.test(text);
 
-            console.log("AHAB text:", text);
-            console.log("AHAB detected:", hasAhab);
+//             console.log("AHAB text:", text);
+//             console.log("AHAB detected:", hasAhab);
 
-            clearTimeout(fallbackTimer); // ✅ stop fallback
-            resolve(hasAhab);        })
-            .catch(() => {
-            clearTimeout(fallbackTimer); // ✅ stop fallback
-            resolve(true); // ✅ DON'T lock user if request fails
-        });
+//             clearTimeout(fallbackTimer); // ✅ stop fallback
+//             resolve(hasAhab);        })
+//             .catch(() => {
+//             clearTimeout(fallbackTimer); // ✅ stop fallback
+//             resolve(true); // ✅ DON'T lock user if request fails
+//         });
 
-        return true;
-    };
+//         return true;
+//     };
 
-    // ✅ Try immediately
-    if (tryResolve()) return;
-        // ✅ mobile fallback retry
-        let tries = 0;
-        const retry = setInterval(() => {
-            if (tryResolve() || tries++ > 10) {
-                clearInterval(retry);
-            }
-        }, 500);
-        ``
+//     // ✅ Try immediately
+//     if (tryResolve()) return;
+//         // ✅ mobile fallback retry
+//         let tries = 0;
+//         const retry = setInterval(() => {
+//             if (tryResolve() || tries++ > 10) {
+//                 clearInterval(retry);
+//             }
+//         }, 500);
 
-    // ✅ Otherwise wait until drawer appears
-    const obs = new MutationObserver(() => {
-        if (tryResolve()) obs.disconnect();
-    });
+//     // ✅ Otherwise wait until drawer appears
+//     const obs = new MutationObserver(() => {
+//         if (tryResolve()) obs.disconnect();
+//     });
 
-    obs.observe(document.body, { childList: true, subtree: true });
-});
+//     obs.observe(document.body, { childList: true, subtree: true });
+// });
 
     function isExceptionPage() {
         // Normalize URL for robust matching
@@ -6470,6 +6471,9 @@ function escapeHtml(str) {
     function enhance() {
         injectStylesOnce();
 
+        // 🚫 Skip if toggle button indicates "Show Alive monsters"
+        if (shouldSkipBecauseToggle()) return;
+
         const autoCards = document.querySelectorAll('.auto-summon-card');
         for (const autoCard of autoCards) {
             const nameEl = autoCard.querySelector('.auto-summon-name');
@@ -6487,7 +6491,6 @@ function escapeHtml(str) {
             const monsterCard = findMatchingMonsterCardByName(autoName);
             if (!monsterCard) continue;
 
-            // Build button and insert next to status
             const wrap = document.createElement('span');
             wrap.className = 'tm-summon-action-wrap';
 
@@ -6509,10 +6512,8 @@ function escapeHtml(str) {
                     return;
                 }
 
-                // Optional: update label depending on what was clicked
                 btn.textContent = (res.mode === 'continue') ? 'Continue' : 'Join';
 
-                // Re-enable after a short delay (in case UI updates)
                 setTimeout(() => {
                     btn.disabled = false;
                 }, 1200);
@@ -6521,6 +6522,14 @@ function escapeHtml(str) {
             wrap.appendChild(btn);
             statusEl.insertAdjacentElement('afterend', wrap);
         }
+    }
+
+    function shouldSkipBecauseToggle() {
+        const btn = document.querySelector('#toggleDeadBtn');
+        if (!btn) return false;
+
+        const txt = norm(btn.textContent);
+        return txt.includes('show alive monsters');
     }
 
     /********************
@@ -10970,20 +10979,92 @@ if (typeof data.xp_delta === "number") {
         return true;
     }
     /* ===================== Init ===================== */
+
+    function getWaveHostPanel() {
+        // If official panel exists → use it
+        const official = document.getElementById("waveQolPanel");
+        if (official) return { el: official, isLocked: false };
+
+        // Otherwise fallback to locked card
+        const locked = document.querySelector(".batch-loot-card");
+        if (locked) return { el: locked, isLocked: true };
+
+        return null;
+    }
+
     function init(attempt = 0) {
 
   if (QOL_ABORTED) return;
 
-    const cards = [...document.querySelectorAll(".monster-container .monster-card ")];
-    const fNameSel = document.querySelector("#fNameSel");
-    const qolTop = document.querySelector(".qol-top");
-    const selectActions = document.querySelector(".qol-select-actions");
-    const qolAttacks = document.querySelector(".qol-attacks");
+   const host = getWaveHostPanel();
+if (!host) {
+  if (attempt < 30) return setTimeout(() => init(attempt + 1), 300);
+  return;
+}
 
-    if (!cards.length || !fNameSel || !qolTop || !selectActions || !qolAttacks) {
-      if (attempt < 30) return setTimeout(() => init(attempt + 1), 300);
-      return;
-    }
+const cards = [...document.querySelectorAll(".monster-container .monster-card")];
+
+let qolTop = host.el.querySelector(".qol-top");
+let selectActions = host.el.querySelector(".qol-select-actions");
+let qolAttacks = host.el.querySelector(".qol-attacks");
+let fNameSel = host.el.querySelector("#fNameSel");
+
+if (host.isLocked) {
+
+
+  if (document.getElementById("tm-qol-under200")) return;
+
+  const panel = document.createElement("div");
+  panel.id = "tm-qol-under200";
+
+  panel.style.cssText = `
+    margin-top:10px;
+    padding:10px;
+    background:#0f121d;
+    border:1px solid #303a60;
+    border-radius:8px;
+  `;
+
+  panel.innerHTML = `
+    <div class="qol-top">
+      <div class="qol-filters">
+        <span class="qol-title">⚔️ Wave Multi Targets</span>
+
+        <div class="select-wrap">
+          <select id="fNameSel" class="modern-select">
+            <option value="">All monsters</option>
+          </select>
+        </div>
+
+        <label><input type="checkbox" id="fJoined" checked> Joined</label>
+        <label><input type="checkbox" id="fUnjoined" checked> Unjoined</label>
+        <label><input type="checkbox" id="fCapNotReached"> CAP not reached</label>
+
+        <div class="qol-select-actions"></div>
+      </div>
+
+      <div class="qol-attacks"></div>
+    </div>
+
+    <div class="qol-status"></div>
+  `;
+
+  // ✅ attach under the unlock message
+  host.el.appendChild(panel);
+
+  // ✅ redirect script to use YOUR injected UI
+  qolTop = panel.querySelector(".qol-top");
+  selectActions = panel.querySelector(".qol-select-actions");
+  qolAttacks = panel.querySelector(".qol-attacks");
+  fNameSel = panel.querySelector("#fNameSel");
+}
+
+
+if (!fNameSel || !qolTop || !selectActions || !qolAttacks) {
+  if (attempt < 30) return setTimeout(() => init(attempt + 1), 300);
+  return;
+}
+
 
     /* ===================== Disable Native Filters ===================== */
     ["fJoined", "fUnjoined", "fCapNotReached"].forEach(id => {
@@ -11348,7 +11429,13 @@ stamToggleWrap.append(
     attackWrap.style.cssText += "align-items:stretch;";
     qolAttacks.replaceWith(attackWrap);
 
-    [1, 10, 50, 100, 200].forEach(stam => {
+
+        const staminaList = host.isLocked
+        ? [1, 10, 50]        // ✅ under lvl 200
+        : [1, 10, 50, 100, 200]; // ✅ normal
+
+        staminaList.forEach(stam => {
+
       const btn = document.createElement("button");
       btn.className = "qol-btn primary";
       btn.style.minWidth = "165px";
@@ -14321,16 +14408,34 @@ let manaBusterMinStamina = 200; // default threshold
 
     function createCAFUI(caf) {
 
+    // 🚫 Do NOT run CAF on wave pages
+    if (location.pathname.includes("active_wave.php")) {
+        return;
+    }
+
         const normalize = s => (s || '').trim().toLowerCase();
 
-        function findWrapper() {
-            return [...document.querySelectorAll('div')]
-                .find(d =>
-                    d.style?.background?.includes('15, 18, 29') &&
-                    d.querySelector('.qol-status') &&
-                    d.querySelector('.qol-filter-row')
-                );
-        }
+
+
+
+function findWrapper() {
+    return [...document.querySelectorAll('div')]
+        .find(d => {
+
+            // 🚫 Skip ALL wave QoL panels (real + fake)
+            if (
+                d.closest('#waveQolPanel') ||     // real lvl200 panel
+                d.closest('#tm-qol-under200')     // your injected panel
+            ) return false;
+
+            return (
+                d.querySelector('.qol-status') &&
+                d.querySelector('.qol-filter-row')
+            );
+        });
+}
+
+
 
         async function injectUI() {
 
